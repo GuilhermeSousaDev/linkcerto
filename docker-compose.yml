@@ -1,0 +1,22 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: alerta-precos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: alerta
+      POSTGRES_PASSWORD: alerta
+      POSTGRES_DB: alerta
+    ports:
+      # 5433 no host pra não brigar com um Postgres que já exista na máquina.
+      - '5433:5432'
+    volumes:
+      - db:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U alerta -d alerta']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db:

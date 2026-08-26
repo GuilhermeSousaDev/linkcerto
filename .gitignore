@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.log
+
+# Segredos — nunca commitar
+.env
+.env.bak
+
+# Sessão do WhatsApp. Commitar isso entrega sua conta pra quem ler o repo.
+data/wa-auth/
+
+# Gerados: lotes de oferta, planos de post e os cards
+data/lotes/
+data/plans/
+data/photos/
