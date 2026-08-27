@@ -138,6 +138,19 @@ const schema = z.object({
    */
   AI_PUBLICO: z.string().default(''),
 
+  // ── Capas ──
+  /**
+   * Onde moram os retratos da capa, uma pasta por casting. Ver `media/capas.ts`
+   * e `npm run capas`. Pasta vazia não quebra nada: a capa volta a ser a foto
+   * do produto desfocada.
+   */
+  CAPAS_DIR: z.string().default('./assets/capas'),
+  /**
+   * Só pro `npm run capas:fetch`, que enche as pastas de arquétipo com retrato
+   * livre. Chave grátis em pexels.com/api. Nada mais no projeto usa isso.
+   */
+  PEXELS_API_KEY: z.string().default(''),
+
   // ── WhatsApp ──
   WA_AUTH_DIR: z.string().default('./data/wa-auth'),
   WA_GROUP_JID: z.string().default(''),

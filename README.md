@@ -43,13 +43,17 @@ serve — o padrão é a [Groq](https://console.groq.com), que tem free tier.
 | `npm run deals` | Mostra as melhores ofertas e **salva o lote** |
 | `npm run send` | Manda pro grupo do WhatsApp o lote que o `deals` mostrou |
 | `npm run niches` | Lista os nichos prontos |
+| `npm run capas` | Os retratos de capa que você tem, por casting |
+| `npm run capas:prep` | Cria o `capas.json` e as pastas dele |
+| `npm run capas:fetch` | Enche as pastas com retrato livre do Pexels |
+| `npm run capas:check` | Folha de provas: como cada foto vai ser recortada |
 | `npm run stats` | Quantos produtos e preços já foram coletados |
 | `npm run wa:login` | Conecta o WhatsApp via QR |
 | `npm run wa:groups` | Lista os grupos e seus JIDs |
 | `npm run db:up` / `db:down` | Sobe / para o Postgres |
 
-Opções: `--top N` (quantos), `--tema "…"` (o assunto do post), `--niche N`
-(nicho pronto), `--keywords "a,b"` (os termos na mão), `--skip 1,4` (descarta
+Opções: `--top N` (quantos), `--tema "…"` (o assunto do post),
+`--keywords "a,b"` (os termos na mão), `--skip 1,4` (descarta
 foto ruim), `--repetir` (aceita produto já postado), `--novo` (ignora o plano
 salvo), `--lote F` (usa um lote salvo), `--sem-filtro` (não descarta por
 público), `--db` (usa o banco em vez da Shopee), `--all` (mostra os descartados
@@ -175,7 +179,7 @@ busca; se é só um **ângulo**, mexe apenas na copy:
 |---|---|
 | `--tema academia` | categoria → busca `camiseta dry fit masculina`, `short academia masculino`… |
 | `--tema roupa de frio` | categoria → `jaqueta masculina`, `blusa de frio masculina`… |
-| `--tema achados que parecem caros` | ângulo → só a copy muda; a busca vem do `.env`/`--niche` |
+| `--tema achados que parecem caros` | ângulo → só a copy muda; a busca vem do `.env`/`--keywords` |
 
 A IA recebe o `AI_PUBLICO` junto, então **mantém o público**: pedir academia
 num perfil masculino traz short de compressão, não legging feminina.
@@ -183,7 +187,7 @@ num perfil masculino traz short de compressão, não legging feminina.
 Ângulo puro não diz o que buscar. Sem `SHOPEE_KEYWORDS` fixo, combine com um:
 
 ```bash
-npm run ideia -- --niche perfumes --tema achados que parecem caros
+npm run ideia -- --keywords "perfume masculino" --tema achados que parecem caros
 ```
 
 As aspas são opcionais — tudo até a próxima opção entra no tema:
@@ -198,15 +202,14 @@ Do mais explícito pro mais inferido:
 
 ```bash
 npm run photos -- --keywords "panela,air fryer"   # 1. os termos, na mão
-npm run photos -- --niche academia                # 2. nicho pronto
-npm run photos -- --tema academia                 # 3. tema, se for categoria
-npm run photos                                    # 4. os termos do plano salvo
-                                                  # 5. senão, SHOPEE_KEYWORDS
+npm run photos -- --tema academia                 # 2. tema, se for categoria
+npm run photos                                    # 3. os termos do plano salvo
+                                                  # 4. senão, SHOPEE_KEYWORDS
 ```
 
-`--niche` usa o catálogo cru do `npm run niches`, que é genérico e **não**
-conhece seu público — é a opção certa quando você quer sair do nicho de
-propósito.
+O catálogo do `npm run niches` continua existindo, mas só como **sugestão pro
+`.env`** e como rede pra quando a IA está fora do ar — ele não conhece seu
+público, e o `--tema` cobre os mesmos casos conhecendo.
 
 **Não sobrou nenhum?** O comando para com erro. Sem termo a Shopee devolve o
 feed geral (bicicleta, iPhone, secador) e o post sai incoerente — errar alto é
@@ -410,7 +413,7 @@ misturar dois posts na mesma pasta. Nada é apagado.
 Saem em `data/photos/<data>/`, já na ordem do post:
 
 ```
-01-CAPA.jpg                  a manchete da IA sobre a 1ª foto, desfocada
+01-CAPA.jpg                  manchete da IA sobre um retrato (ver "A capa")
 02-tenis-street-life.jpg     produtos
 03-kit-4-camisetas.jpg
 05-CTA.jpg                   o pedido final
@@ -431,6 +434,93 @@ identidade, não copy.
 No `00-LEGENDA.txt`, tudo abaixo da linha dupla é referência — roteiro,
 comentário fixado, respostas prontas e os links de afiliado. **Não cole no
 post.**
+
+### A capa
+
+A capa é o único slide que decide se alguém para de deslizar, e foto de produto
+desfocada não para ninguém — quem para é **um rosto**. Então a capa tem uma
+biblioteca própria de retratos, em `assets/capas/`, uma pasta por *casting*:
+
+```
+assets/capas/
+  comedia/    humor, cara de deboche, expressão de meme
+  luta/       lutador, boxe, MMA, intensidade
+  academia/   treino, musculação, suor
+  rico/       luxo, terno, ostentação
+  perfume/    homem arrumado, luz dramática
+  som/        fone de ouvido, música, foco
+```
+
+Esses seis saíram do que o perfil **realmente postou** — relógio, camisa social
+e polo, roupa de academia e fone de ouvido — mais perfume, que está no plano.
+Não há casting feminino nem de casa porque não há produto feminino nem de casa:
+dos produtos que já viraram post, 100% são masculinos.
+
+Casting é **tom, não categoria de produto**: um fone com ângulo de treino pede
+`luta`, o mesmo fone com ângulo de "parece caro" pede `rico`. Quem escolhe a
+pasta é a IA, a partir do `--tema`, no campo `capa.casting` do plano — que você
+pode trocar à mão antes de rodar o `photos`.
+
+**Pra vender outra coisa amanhã**, o catálogo é um arquivo: `capas.json` na
+raiz. Acrescente a entrada, rode `npm run capas:prep` (cria a pasta) e
+`npm run capas:fetch` (enche). Pasta criada na mão funciona mesmo sem estar no
+`capas.json` — só entra no prompt da IA com o nome da pasta no lugar da
+descrição.
+
+```json
+{
+  "cozinha": {
+    "descricao": "gente cozinhando, rotina de casa — panela, organizador",
+    "busca": "person cooking kitchen face"
+  }
+}
+```
+
+Dentro da pasta, a foto entra por **rodízio**: a que faz mais tempo que não
+aparece é a próxima (o controle fica em `data/capas-uso.json`). Sorteio
+repetiria — com 6 fotos, 1 chance em 6 de repetir a capa de ontem, e capa
+repetida em dois dias é o mesmo que capa fixa pra quem te segue. A recorrência
+espaçada é o que dá cara de perfil em vez de post avulso.
+
+**O tratamento é o que faz virar série.** Seis fotos de origens diferentes
+passam por preto e branco de contraste duro, grão e recorte que procura o rosto
+sozinho, e saem parecendo a mesma direção de arte. Por cima, papel off-white,
+manchete preta alinhada à esquerda e o subtítulo grifado de amarelo. O que dá
+identidade à capa não é a foto — é o que se faz com ela.
+
+Pasta vazia não quebra nada: sem retrato, a capa volta a ser a foto do produto
+desfocada, como antes.
+
+```bash
+npm run capas:prep    # cria as pastas, cada uma com um LEIA-ME dentro
+npm run capas:fetch   # enche as de arquétipo com retrato livre do Pexels
+npm run capas         # o que você tem hoje, por casting
+```
+
+`capas:fetch` pede `PEXELS_API_KEY` no `.env` (chave grátis e na hora em
+pexels.com/api; as fotos são de uso comercial livre, sem atribuição
+obrigatória). `--por-casting N` muda o alvo por pasta (padrão 6).
+
+**Banco de imagem erra muito o que você pediu** — "boxer" devolve cachorro,
+"headphones" devolve fone em cima de um sofá. Por isso existe o
+`npm run capas:check`: ele monta uma folha de provas por casting, com cada foto
+já tratada e recortada **como a capa vai recortar**, e o nome do arquivo do
+lado. Apague as ruins de `assets/capas/<casting>/` e pronto — o rodízio se
+ajusta sozinho, e o `capas:fetch` nunca traz de volta o que você apagou (ele
+guarda os ids já baixados em `data/capas-vistas.json`).
+
+A pasta `comedia` recebe cara de riso genérica do Pexels, o que segura um post
+— mas o que funciona ali de verdade é rosto que o seu público **reconhece**, e
+banco de imagem livre não tem rosto conhecido. Essas você põe à mão.
+
+> **Não existe gerar isso de graça.** Dos 417 modelos do OpenRouter, 11 fazem
+> saída de imagem e **todos são pagos** — não há variante `:free`. E mesmo
+> pagando, os modelos de imagem do Google e da OpenAI recusam gerar pessoa real
+> conhecida. Por isso a biblioteca é de arquivo: é o único caminho que entrega
+> rosto conhecido, e ainda por cima é o de graça.
+
+> **Rosto de pessoa real em post monetizado é uso comercial de imagem** — é o
+> motivo de a pasta `comedia` ser manual. Quem entra ali é escolha sua.
 
 ### A foto é escolhida, não sorteada
 
@@ -496,7 +586,7 @@ npm run niches                      # sugestões por categoria, com a comissão
 ```
 
 Copie a linha pro `.env` (`SHOPEE_KEYWORDS=…`) ou teste sem editar nada com
-`--keywords` / `--niche`.
+`--keywords`.
 
 > **Comissão importa mais que ticket.** Moda e perfumaria pagam 15-20%,
 > eletrônico 4-7%. Eletrônico tem ticket maior, mas converte muito menos em

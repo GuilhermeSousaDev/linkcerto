@@ -7,9 +7,19 @@ dist/
 .env.bak
 
 # Sessão do WhatsApp. Commitar isso entrega sua conta pra quem ler o repo.
+data/
 data/wa-auth/
 
 # Gerados: lotes de oferta, planos de post e os cards
 data/lotes/
 data/plans/
 data/photos/
+
+# Rodízio das capas e folhas de prova: estado local, refaz sozinho.
+data/capas-uso.json
+data/capas-check/
+# Ids do Pexels já baixados. Local de propósito: versionado, um clone novo (que
+# não tem as fotos, veja assets/ abaixo) baixaria zero foto por achar que já viu
+# todas.
+data/capas-vistas.json
+assets/

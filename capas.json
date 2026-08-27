@@ -1,0 +1,26 @@
+{
+  "comedia": {
+    "descricao": "humor, cara de deboche, expressão de meme — post que faz rir",
+    "busca": "man laughing face close up"
+  },
+  "luta": {
+    "descricao": "lutador, boxe, MMA, intensidade — produto que aguenta pancada",
+    "busca": "boxing man face portrait"
+  },
+  "academia": {
+    "descricao": "treino, musculação, suor — dry fit, short, camiseta de treino",
+    "busca": "muscular man face portrait gym"
+  },
+  "rico": {
+    "descricao": "luxo, terno, ostentação — relógio, camisa social, \"parece caro\"",
+    "busca": "businessman face portrait suit"
+  },
+  "perfume": {
+    "descricao": "homem arrumado, luz dramática, cara de cheiroso — perfumaria",
+    "busca": "handsome man face portrait dark"
+  },
+  "som": {
+    "descricao": "fone de ouvido, música, foco — fone, caixa de som, áudio",
+    "busca": "man listening music headphones face"
+  }
+}

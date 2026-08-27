@@ -1,8 +1,11 @@
+import { mkdirSync } from 'node:fs';
 import { config } from './infra/config.js';
 import { logger } from './infra/logger.js';
 import { close, stats } from './infra/db.js';
 import { WhatsApp } from './infra/whatsapp.js';
 import { listNiches } from './domain/niches.js';
+import { baixarDoPexels, castings, fotosDe, listarCapas, preparar } from './media/capas.js';
+import { folhaDeProvas } from './media/cards.js';
 import { avisoDeAlta, loteToJson } from './domain/lote.js';
 import { planToJson } from './ai/index.js';
 import * as ofertas from './services/ofertas.js';
@@ -26,12 +29,15 @@ Alerta de Preços
   npm run photos      Gera os cards 1080x1080 com o plano da IA
   npm run photos:send Manda os cards pro seu grupo pessoal (ponte pro celular)
   npm run niches      Sugestões de termos por nicho, com a comissão típica
+  npm run capas       Os retratos de capa que você tem, por casting
+  npm run capas:prep  Cria o capas.json e as pastas dele
+  npm run capas:fetch Enche as pastas com retrato livre (Pexels) — --por-casting N
+  npm run capas:check Como cada foto vai ser recortada, numa folha de provas
   npm run wa:login    Conecta o WhatsApp via QR code (uma vez só)
   npm run wa:groups   Lista seus grupos e os JIDs
   npm run stats       Quantos produtos/preços já foram coletados
 
   Opções:  --tema "…"    O assunto. Se for categoria, muda a busca também
-           --niche N     Um nicho pronto do catálogo (npm run niches)
            --keywords    "a,b" — os termos na mão
            --top N       Quantos mostrar/enviar (padrão: ${config.TOP_N})
            --skip 1,4    Descarta ofertas da lista (foto ruim) e puxa as próximas
@@ -48,7 +54,6 @@ Alerta de Preços
 
 const pedidoDeBusca = () => ({
   manual: texto('keywords'),
-  niche: frase('niche') ?? frase('nicho'),
   tema: frase('tema'),
   comando,
 });
@@ -349,6 +354,39 @@ const COMANDOS: Record<string, () => Promise<void> | void> = {
   'wa:login': waLogin,
   'wa:groups': waGroups,
   niches: () => out.linha(listNiches()),
+  capas: () => out.linha(listarCapas()),
+  'capas:prep': () => {
+    out.linha(`\n${preparar()}`);
+    out.linha(listarCapas());
+  },
+  'capas:check': async () => {
+    const nomes = castings();
+    if (!nomes.length) {
+      out.linha(listarCapas());
+      return;
+    }
+    const dir = 'data/capas-check';
+    mkdirSync(dir, { recursive: true });
+
+    out.linha('\nComo cada foto vai ser recortada na capa:\n');
+    for (const nome of nomes) {
+      const fotos = fotosDe(nome);
+      const arquivo = `${dir}/${nome}.jpg`;
+      await folhaDeProvas(fotos, arquivo);
+      out.linha(`  ${nome.padEnd(10)} ${String(fotos.length).padStart(2)} foto(s)  ${arquivo}`);
+    }
+    out.linha('\nApague de assets/capas/<casting>/ as que não tiverem rosto ou');
+    out.linha('estiverem mal recortadas. O rodízio se ajusta sozinho.\n');
+  },
+  'capas:fetch': async () => {
+    out.linha('\nBaixando retratos livres do Pexels:\n');
+    await baixarDoPexels(num('por-casting', 6), out.linha);
+    out.linha(listarCapas());
+    out.linha(
+      'Banco de imagem livre não tem rosto conhecido: o que veio pra "comedia" é\n' +
+        'cara de espanto genérica. Segura um post, mas as boas você põe à mão.\n',
+    );
+  },
   stats: async () => console.table(await stats()),
 };
 

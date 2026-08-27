@@ -22,8 +22,6 @@ import { aiEnabled, filtrarPublico, searchTerms, type ForaDoPublico } from '../a
 export interface PedidoDeBusca {
   /** `--keywords`: os termos na mão, ganham de todo o resto. */
   manual?: string;
-  /** `--niche`: um nicho pronto do catálogo. */
-  niche?: string;
   /** `--tema`: vira busca se for categoria; se for ângulo, não mexe. */
   tema?: string;
   /** Só pra montar a mensagem de erro com o comando que a pessoa digitou. */
@@ -36,12 +34,18 @@ export interface Termos {
 }
 
 /**
- * O que buscar, do mais explícito pro mais inferido: `--keywords`, `--niche`,
- * `--tema`, o arquivo reaproveitado e por fim `SHOPEE_KEYWORDS`.
+ * O que buscar, do mais explícito pro mais inferido: `--keywords`, `--tema`, o
+ * arquivo reaproveitado e por fim `SHOPEE_KEYWORDS`.
  *
  * O `--tema` participar disso conserta um erro de projeto: ele só mudava o
  * texto, então "--tema academia" saía com camisa social embaixo de uma capa
  * escrita "treino".
+ *
+ * O catálogo de nichos continua existindo, mas só como sugestão impressa
+ * (`npm run niches`) e como rede pra quando a IA está fora do ar — ele não é
+ * mais um jeito de pedir a busca. Escolher entre `--tema` e `--niche` era uma
+ * decisão a mais pra chegar no mesmo lugar, já que o `--tema` cobre os dois
+ * casos e ainda conhece o público do perfil.
  */
 export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
   const avisos: string[] = [];
@@ -49,23 +53,13 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
 
   if (p.manual) return { termos: keywords(p.manual), avisos };
 
-  if (!base.length && !p.niche && !p.tema) {
+  if (!base.length && !p.tema) {
     throw new Error(
       'Sem termos de busca. Diga o assunto:\n' +
         `  npm run ${p.comando} -- --tema academia\n` +
-        `  npm run ${p.comando} -- --niche perfumes     (npm run niches lista todos)\n` +
         `  npm run ${p.comando} -- --keywords "camisa masculina,tenis masculino"\n` +
-        'Ou volte a fixar um nicho no SHOPEE_KEYWORDS do .env.',
+        'Ou volte a fixar um nicho no SHOPEE_KEYWORDS do .env (npm run niches sugere).',
     );
-  }
-
-  if (p.niche) {
-    const achado = findNiche(p.niche);
-    if (!achado) {
-      throw new Error(`Nicho "${p.niche}" não existe. Veja os prontos com "npm run niches".`);
-    }
-    avisos.push(`\n📚 Nicho "${achado.nome}" — ${achado.niche.descricao}`);
-    return { termos: achado.niche.keywords, avisos };
   }
 
   if (!p.tema) return { termos: base, avisos };
@@ -79,8 +73,8 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
     );
   }
 
-  // A IA ganha do catálogo aqui, ao contrário do `--niche`: o nicho pronto é
-  // genérico e não sabe o público do perfil.
+  // A IA ganha do catálogo: o nicho pronto é genérico e não sabe o público do
+  // perfil. O catálogo só entra quando ela não pode responder.
   if (!aiEnabled()) {
     const achado = findNiche(p.tema);
     if (achado) {
@@ -111,7 +105,8 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
     throw new Error(
       `"${p.tema}" é um ângulo, não uma categoria de produto — não dá pra buscar por isso.\n` +
         'Combine com o que buscar:\n' +
-        `  npm run ${p.comando} -- --niche perfumes --tema ${p.tema}`,
+        `  npm run ${p.comando} -- --keywords "perfume masculino" --tema ${p.tema}\n` +
+        'Ou fixe o nicho no SHOPEE_KEYWORDS do .env (npm run niches sugere).',
     );
   }
 

@@ -4,6 +4,7 @@ import { logger } from '../infra/logger.js';
 import { brl } from '../domain/mensagem.js';
 import type { Scored } from '../domain/scoring.js';
 import { clip } from '../util/texto.js';
+import { catalogo, resolverCasting } from '../media/capas.js';
 import { aiEnabled, askJson } from './client.js';
 import { LIMITS } from './limites.js';
 import { conferirTextosGerais, etiquetaMente } from './precos.js';
@@ -17,6 +18,8 @@ const schema = z.object({
     titulo: z.string(),
     subtitulo: z.string().default(''),
     variantes: z.array(z.string()).default([]),
+    /** Qual pasta de retrato usar. Ver `media/capas.ts`. */
+    casting: z.string().default(''),
   }),
   ordem: z.array(z.coerce.number().int()).default([]),
   slides: z
@@ -56,7 +59,11 @@ export interface PostPlan {
   termos: string[];
   /** A tese do post: o que amarra esses produtos num conteúdo só. */
   angulo: string;
-  capa: { titulo: string; subtitulo: string; variantes: string[] };
+  /**
+   * `casting` é a pasta de retrato da capa, já casada com uma que existe de
+   * verdade no disco — vazio quer dizer capa sem rosto, na foto do produto.
+   */
+  capa: { titulo: string; subtitulo: string; variantes: string[]; casting: string };
   cta: { headline: string; linha1: string; linha2: string };
   /** Legenda pronta pra colar, hashtags incluídas. */
   legenda: string;
@@ -202,9 +209,25 @@ produto não conversa direto com ele, encaixe mesmo assim — o tema é a lente
 pela qual o post é contado, não uma regra de quais produtos entram.\n`
     : '';
 
+  // As pastas de retrato que existem AGORA, com foto dentro. Quando não há
+  // nenhuma o campo nem entra no prompt: pedir uma escolha impossível só gasta
+  // token e faz o modelo inventar um nome de pasta que não existe.
+  const capas = catalogo();
+  const castings = capas.length
+    ? `
+CAPAS DISPONÍVEIS — escolha UMA pro campo "casting":
+${capas.map((c) => `  ${c.nome} — ${c.descricao}`).join('\n')}
+
+A capa é o rosto de uma PESSOA em preto e branco com a manchete impressa em
+cima. Escolha pelo TOM do post, não pela categoria do produto: um fone com
+ângulo de treino pede "luta", o mesmo fone com ângulo de "parece caro" pede
+"rico". Nenhum combina? Devolva "" e a capa sai sem rosto.
+`
+    : '';
+
   return `NICHO / termos de busca: ${termos.join(', ') || 'variado'}
 PÚBLICO: ${publico}
-PERFIL: ${perfil}${bloco}
+PERFIL: ${perfil}${bloco}${castings}
 ${
   medidos
     ? `${medidos} destes têm preço normal MEDIDO por nós ao longo do tempo. Esse é o diferencial do perfil: os outros perfis repetem o desconto que a loja declarou.`
@@ -223,7 +246,9 @@ a escrever uma linha que não cabe.
   "capa": {
     "titulo": "manchete do primeiro slide, no máximo ${LIMITS.titulo} caracteres — mire em 30",
     "subtitulo": "complemento curto, no máximo ${LIMITS.subtitulo} — mire em 24",
-    "variantes": ["outra manchete inteira, até ${LIMITS.titulo}", "mais uma, até ${LIMITS.titulo}"]
+    "variantes": ["outra manchete inteira, até ${LIMITS.titulo}", "mais uma, até ${LIMITS.titulo}"]${
+      capas.length ? ',\n    "casting": "o nome de UMA das capas disponíveis, ou \\"\\""' : ''
+    }
   },
   "ordem": [índices dos produtos na ordem em que aparecem no post],
   "slides": [
@@ -378,6 +403,10 @@ export async function postPlan(
       titulo: clip(raw.capa.titulo, LIMITS.titulo),
       subtitulo: clip(raw.capa.subtitulo, LIMITS.subtitulo),
       variantes: raw.capa.variantes.map((v) => clip(v, LIMITS.titulo)).filter(Boolean),
+      // Resolvido aqui, e não na hora de renderizar: o plano salvo é feito pra
+      // você abrir e corrigir. Se a IA escolheu "lutador" e a pasta chama
+      // "luta", quem lê o arquivo tem que ver o nome que existe de verdade.
+      casting: resolverCasting(raw.capa.casting),
     },
     cta: {
       headline: clip(raw.cta.headline, LIMITS.ctaHeadline),
@@ -413,8 +442,9 @@ const savedSchema = z.object({
       titulo: z.string().default(''),
       subtitulo: z.string().default(''),
       variantes: z.array(z.string()).default([]),
+      casting: z.string().default(''),
     })
-    .default({ titulo: '', subtitulo: '', variantes: [] }),
+    .default({ titulo: '', subtitulo: '', variantes: [], casting: '' }),
   cta: z
     .object({
       headline: z.string().default(''),
@@ -476,6 +506,10 @@ export function loadPlan(raw: string, disponiveis: Scored[]): PostPlan {
       titulo: clip(p.capa.titulo, LIMITS.titulo),
       subtitulo: clip(p.capa.subtitulo, LIMITS.subtitulo),
       variantes: p.capa.variantes.map((v) => clip(v, LIMITS.titulo)).filter(Boolean),
+      // Passa pelo resolvedor de novo: vale pra plano editado à mão, e pra
+      // plano salvo antes de a pasta existir. Casting que sumiu vira '' e a
+      // capa cai no fallback, em vez de derrubar o `photos`.
+      casting: resolverCasting(p.capa.casting),
     },
     cta: {
       headline: clip(p.cta.headline, LIMITS.ctaHeadline),

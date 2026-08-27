@@ -38,6 +38,13 @@ export function plano(p: PostPlan): void {
 
   linha(`🖼️  CAPA\n   ${p.capa.titulo}`);
   if (p.capa.subtitulo) linha(`   ${p.capa.subtitulo}`);
+  // Sem rosto a capa cai na foto do produto desfocada. Dizer qual é o caso
+  // aqui evita a pergunta "por que a capa saiu diferente da de ontem?".
+  linha(
+    p.capa.casting
+      ? `   retrato: ${p.capa.casting}`
+      : '   retrato: nenhum — capa na foto do produto (npm run capas)',
+  );
   if (p.capa.variantes.length) {
     linha('   outras opções de capa:');
     p.capa.variantes.forEach((v) => linha(`     • ${v}`));

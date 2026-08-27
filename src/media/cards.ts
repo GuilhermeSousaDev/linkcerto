@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { config } from '../infra/config.js';
 import { logger } from '../infra/logger.js';
 import { brl } from '../domain/mensagem.js';
+import { pegarFoto } from './capas.js';
 import type { PostPlan } from '../ai/index.js';
 import type { Scored } from '../domain/scoring.js';
 
@@ -22,6 +23,12 @@ const S = 1080;
 const FONT = 'Montserrat';
 const ACCENT = '#E8FF3A';
 const INK = '#0B0F0A';
+/**
+ * O off-white da capa com retrato. Branco puro (#FFF) endurecia a borda contra
+ * o preto e branco da foto e dava cara de slide; o papel levemente quente
+ * parece impresso, que é o efeito que a capa procura.
+ */
+const PAPEL = '#F2EFE9';
 
 function esc(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -262,6 +269,284 @@ function coverSvg(capa: PostPlan['capa']): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">${parts.join('')}</svg>`;
 }
 
+// ─── Capa com retrato ───────────────────────────────────────────────────────
+
+/**
+ * Onde o retrato entra e até onde o papel ainda cobre ele.
+ *
+ * O texto vive no papel e o rosto embaixo, com só uma faixa de encontro: sem a
+ * fusão a borda reta do JPEG cortava a cabeça da pessoa numa linha dura e o
+ * card virava colagem. Com ela, o retrato parece impresso no papel.
+ *
+ * A faixa é curta de propósito. Na primeira versão o papel descia até 60% da
+ * altura pra "garantir" a leitura da manchete, e lavava justamente o rosto —
+ * que é a única coisa pela qual a capa existe.
+ */
+const RETRATO_TOP = 400;
+const FUSAO_ATE = 620;
+/** O texto termina aqui. Abaixo é do rosto. */
+const TEXTO_FUNDO = 470;
+/** E começa aqui: menos que isso e a primeira linha sai cortada pelo topo. */
+const TEXTO_TOPO = 90;
+
+/**
+ * Preto e branco de contraste duro, com grão.
+ *
+ * É o tratamento que faz seis fotos de origens diferentes virarem uma série: o
+ * que dá identidade à capa não é a foto, é o que se faz com ela. Foto colorida
+ * de banco de imagem entrega banco de imagem; a mesma foto assim entrega
+ * editorial.
+ */
+/**
+ * Onde o assunto deve cair dentro da faixa, de 0 (topo) a 1 (base).
+ *
+ * O número tem que respeitar o PAPEL, não só a foto: a fusão só termina em
+ * `FUSAO_ATE`, o que em coordenada de faixa é ~0.29. Ancorar o assunto em 0.3
+ * punha o rosto exatamente embaixo da parte ainda coberta — o card saía com um
+ * queixo e um paletó, sem rosto nenhum.
+ *
+ * 0.48 deixa o rosto logo abaixo de onde o papel acaba, com a testa roçando a
+ * cauda da fusão. É também onde a capa de referência põe os olhos: por volta de
+ * 70% da altura total do card.
+ */
+const ASSUNTO_Y = 0.48;
+/** Quanto ampliar antes de recortar. Foto de banco costuma vir com o assunto
+ * pequeno demais no meio da cena; 1.25 aproxima sem estourar a nitidez. */
+const ZOOM = 1.25;
+
+/**
+ * Recorta a foto POSICIONANDO o assunto, em vez de recortar e torcer.
+ *
+ * O `fit: cover` com `attention` sozinho decide o recorte pela saliência e
+ * ignora a diagramação: como a manchete ocupa o topo do card, o rosto precisa
+ * cair num lugar específico, e não no centro da janela. Aqui a janela do
+ * `attention` serve só pra DESCOBRIR onde está o assunto — quem decide o
+ * enquadramento é o layout.
+ */
+async function enquadrar(src: string, w: number, h: number): Promise<Buffer> {
+  const largura = Math.round(w * ZOOM);
+
+  // Sonda: o `cropOffset` vem negativo e já na escala de saída, então dá pra
+  // ler direto onde o sharp centrou a janela do assunto.
+  const { info } = await sharp(src)
+    .resize(largura, Math.round(h * ZOOM), { fit: 'cover', position: sharp.strategy.attention })
+    .toBuffer({ resolveWithObject: true });
+
+  const escalada = await sharp(src)
+    .resize({ width: largura })
+    .toBuffer({ resolveWithObject: true });
+
+  const altura = escalada.info.height;
+  const centro = -(info.cropOffsetTop ?? 0) + (h * ZOOM) / 2;
+  const limite = (n: number, max: number) => Math.max(0, Math.min(Math.round(n), Math.max(0, max)));
+
+  return sharp(escalada.data)
+    .extract({
+      left: limite(-(info.cropOffsetLeft ?? 0), largura - w),
+      top: limite(centro - ASSUNTO_Y * h, altura - h),
+      width: Math.min(w, largura),
+      height: Math.min(h, altura),
+    })
+    .toBuffer();
+}
+
+async function tratar(src: string, w: number, h: number): Promise<Buffer> {
+  const base = await sharp(await enquadrar(src, w, h))
+    .resize(w, h, { fit: 'cover' })
+    .greyscale()
+    // No cinza natural o retrato empata de densidade com o papel e o card fica
+    // sem peso — é o passo que mais muda a capa.
+    .linear(1.32, -26)
+    .sharpen({ sigma: 1.0, m1: 0.5, m2: 2.0 })
+    .toColourspace('srgb')
+    .png()
+    .toBuffer();
+
+  // Gaussiano de média 128 em soft-light: mexe na textura sem mexer no brilho
+  // médio, então o contraste ajustado acima continua valendo.
+  const grao = await sharp({
+    create: {
+      width: w,
+      height: h,
+      channels: 3,
+      // O ruído sobrescreve o fundo; `background` está aqui só porque o tipo
+      // de `create` exige. O cinza médio é o mesmo 128 da média do gaussiano.
+      background: '#808080',
+      noise: { type: 'gaussian', mean: 128, sigma: 10 },
+    },
+  })
+    .png()
+    .toBuffer();
+
+  return sharp(base).composite([{ input: grao, blend: 'soft-light' }]).png().toBuffer();
+}
+
+/** A faixa onde o papel se dissolve em cima do retrato. */
+function fusaoSvg(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">
+    <defs>
+      <!--
+        Quatro paradas, não duas: a rampa linear de opacidade em cima de uma
+        foto escura lia como uma FAIXA horizontal de névoa, com início e fim
+        visíveis. Segurar o papel no começo e derrubar rápido no fim tira a
+        borda e deixa a dissolução parecendo impressão.
+      -->
+      <linearGradient id="fusao" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${PAPEL}" stop-opacity="1"/>
+        <stop offset="30%" stop-color="${PAPEL}" stop-opacity="0.95"/>
+        <stop offset="62%" stop-color="${PAPEL}" stop-opacity="0.6"/>
+        <stop offset="100%" stop-color="${PAPEL}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <rect x="0" y="${RETRATO_TOP}" width="${S}" height="${FUSAO_ATE - RETRATO_TOP}"
+          fill="url(#fusao)"/>
+  </svg>`;
+}
+
+/**
+ * Manchete preta no papel, alinhada à esquerda, com o subtítulo grifado.
+ *
+ * Montada de baixo pra cima, ancorada em `TEXTO_FUNDO`: assim manchete de uma
+ * linha e de três terminam na mesma altura e nenhuma das duas invade o rosto.
+ * Ancorada no topo, a de três linhas descia até a boca da pessoa.
+ */
+function capaClaraSvg(capa: PostPlan['capa']): string {
+  const margem = 60;
+  const maxW = S - margem * 2;
+
+  const title = cleanTitle(capa.titulo).toUpperCase();
+
+  const sub = cleanTitle(capa.subtitulo).toUpperCase();
+  const subSize = sub ? fitSize(sub, 52, maxW - 40) : 0;
+  const subH = sub ? Math.round(subSize * 1.5) : 0;
+
+  const subTop = TEXTO_FUNDO - subH;
+  const ultimaLinha = sub ? subTop - 30 : TEXTO_FUNDO;
+
+  /**
+   * O maior corpo que cabe em LARGURA e em ALTURA.
+   *
+   * A altura é a parte que faltava: encolher só pela largura deixava três
+   * linhas de 112 empilhadas num espaço de 272px, e como o bloco é ancorado
+   * embaixo, o que sobrava saía pra fora do card — a manchete longa perdia a
+   * primeira linha, cortada pelo topo.
+   */
+  const disponivel = ultimaLinha - TEXTO_TOPO;
+  let size = 112;
+  let lines = wrap(title, size, maxW, 3);
+  let lineH = Math.round(size * 1.02) + 10;
+
+  while (size > 44 && (lines.length - 1) * lineH + size > disponivel) {
+    size -= 4;
+    lines = wrap(title, size, maxW, 3);
+    lineH = Math.round(size * 1.02) + 10;
+  }
+  // Ainda pode sobrar uma linha larga demais (palavra única e comprida).
+  size = Math.min(size, ...lines.map((l) => fitSize(l, size, maxW)));
+  lineH = Math.round(size * 1.02) + 10;
+
+  const primeiraLinha = ultimaLinha - (lines.length - 1) * lineH;
+
+  const parts: string[] = [];
+
+  lines.forEach((line, i) => {
+    parts.push(`
+    <text x="${margem}" y="${primeiraLinha + i * lineH}" fill="${INK}"
+          font-family="${FONT}" font-weight="800" font-size="${size}"
+          letter-spacing="-2">${esc(line)}</text>`);
+  });
+
+  if (sub) {
+    // Bloco amarelo, não texto amarelo: o #E8FF3A é o mesmo do resto do
+    // carrossel, mas em cima do papel claro ele sumia. Atrás de texto preto
+    // vira marca-texto — e é o que o olho acha logo depois da manchete.
+    const padX = Math.round(subSize * 0.42);
+    const w = Math.round(textWidth(sub, subSize) + padX * 2);
+    parts.push(`
+    <rect x="${margem}" y="${subTop}" width="${w}" height="${subH}" fill="${ACCENT}"/>
+    <text x="${margem + padX}" y="${subTop + subH / 2}" fill="${INK}"
+          font-family="${FONT}" font-weight="800" font-size="${subSize}"
+          dominant-baseline="central">${esc(sub)}</text>`);
+  }
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">${parts.join('')}</svg>`;
+}
+
+/**
+ * Folha de provas: cada foto do casting, já tratada e recortada como a capa
+ * vai recortar, numa grade só.
+ *
+ * Existe porque banco de imagem livre erra muito o que você pediu — "boxer"
+ * devolve cachorro, "headphones" devolve fone em cima de um sofá — e o erro só
+ * aparece quando o post já está pronto. Aqui aparece antes, com o nome do
+ * arquivo do lado, pra você apagar os ruins em dez segundos.
+ */
+export async function folhaDeProvas(fotos: string[], out: string): Promise<void> {
+  const COLS = 3;
+  const CW = 360;
+  const CH = Math.round((CW * (S - RETRATO_TOP)) / S);
+  const ROTULO = 34;
+  const linhas = Math.ceil(fotos.length / COLS);
+  const W = COLS * CW;
+  const H = linhas * (CH + ROTULO);
+
+  const celulas = await Promise.all(
+    fotos.map(async (foto, i) => ({
+      input: await tratar(foto, CW, CH),
+      left: (i % COLS) * CW,
+      top: Math.floor(i / COLS) * (CH + ROTULO),
+    })),
+  );
+
+  const rotulos = fotos
+    .map((foto, i) => {
+      const nome = foto.split(/[\\/]/).pop() ?? '';
+      const x = (i % COLS) * CW + 10;
+      const y = Math.floor(i / COLS) * (CH + ROTULO) + CH + 23;
+      return `<text x="${x}" y="${y}" fill="${INK}" font-family="${FONT}"
+                    font-weight="700" font-size="20">${esc(nome)}</text>`;
+    })
+    .join('');
+
+  await sharp({ create: { width: W, height: H, channels: 3, background: PAPEL } })
+    .composite([
+      ...celulas,
+      {
+        input: Buffer.from(
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${rotulos}</svg>`,
+        ),
+        top: 0,
+        left: 0,
+      },
+    ])
+    .jpeg({ quality: 88, mozjpeg: true })
+    .toFile(out);
+}
+
+/** Papel + retrato tratado + fusão + manchete. */
+async function renderCapaComRetrato(
+  foto: string,
+  capa: PostPlan['capa'],
+  out: string,
+): Promise<void> {
+  const retrato = await tratar(foto, S, S - RETRATO_TOP);
+
+  const papel = await sharp({
+    create: { width: S, height: S, channels: 3, background: PAPEL },
+  })
+    .png()
+    .toBuffer();
+
+  await sharp(papel)
+    .composite([
+      { input: retrato, top: RETRATO_TOP, left: 0 },
+      { input: Buffer.from(fusaoSvg()), top: 0, left: 0 },
+      { input: Buffer.from(capaClaraSvg(capa)), top: 0, left: 0 },
+    ])
+    .jpeg({ quality: 94, mozjpeg: true, chromaSubsampling: '4:4:4' })
+    .toFile(out);
+}
+
 /**
  * Último slide, só o pedido.
  *
@@ -382,11 +667,22 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
   if (first) {
     const src = resolve(origDir, `02-${slug(first.s.offer.title)}.jpg`);
 
-    const coverBg = await sharp(src).resize(S, S, { fit: 'cover' }).blur(24).toBuffer();
-    await sharp(coverBg)
-      .composite([{ input: Buffer.from(coverSvg(plan.capa)), top: 0, left: 0 }])
-      .jpeg({ quality: 94, mozjpeg: true })
-      .toFile(resolve(outDir, '01-CAPA.jpg'));
+    // Com retrato a capa é outra coisa: papel claro, manchete preta e um rosto
+    // embaixo. Sem retrato — pasta vazia, casting que a IA não escolheu — cai
+    // na foto do produto desfocada, que é o que sempre foi. O fallback importa:
+    // ninguém deve precisar ter foto na pasta pra conseguir gerar um post.
+    const capaPath = resolve(outDir, '01-CAPA.jpg');
+    const retrato = plan.capa.casting ? pegarFoto(plan.capa.casting) : null;
+
+    if (retrato) {
+      await renderCapaComRetrato(retrato, plan.capa, capaPath);
+    } else {
+      const coverBg = await sharp(src).resize(S, S, { fit: 'cover' }).blur(24).toBuffer();
+      await sharp(coverBg)
+        .composite([{ input: Buffer.from(coverSvg(plan.capa)), top: 0, left: 0 }])
+        .jpeg({ quality: 94, mozjpeg: true })
+        .toFile(capaPath);
+    }
 
     const ctaBg = await sharp(src).resize(S, S, { fit: 'cover' }).blur(30).toBuffer();
     await sharp(ctaBg)
