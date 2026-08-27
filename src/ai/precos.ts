@@ -58,7 +58,11 @@ export function conferirTextosGerais(
   if (!produtos.length) return [];
 
   const precos = produtos.map((p) => p.offer.price);
-  const maior = Math.max(...precos);
+  // O teto é o da VARIAÇÃO mais cara, não o do menor preço de cada produto.
+  // "Tudo abaixo de 100" com um produto de 67,90 cujas variações chegam a
+  // 133,56 é promessa quebrada na hora em que a pessoa escolhe o tamanho — e
+  // pelo menor preço a checagem deixava passar.
+  const maior = Math.max(...produtos.map((p) => p.offer.priceMax ?? p.offer.price));
   const queixas: QueixaDePreco[] = [];
 
   for (const { campo, texto } of textos) {

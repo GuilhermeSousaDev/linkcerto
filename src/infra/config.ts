@@ -35,7 +35,21 @@ const schema = z.object({
   SHOPEE_APP_ID: z.string().default(''),
   SHOPEE_APP_SECRET: z.string().default(''),
   SHOPEE_API_URL: z.string().default('https://open-api.affiliate.shopee.com.br/graphql'),
-  SHOPEE_SUB_ID: z.string().default('wa-group'),
+  /**
+   * Marcador de origem no link de afiliado, pra separar no relatório da Shopee
+   * o que veio do grupo do que veio do TikTok.
+   *
+   * SÓ LETRAS E NÚMEROS. A Shopee recusa hífen e underscore com
+   * `error [11001]: Params Error : invalid sub id` — e o padrão daqui era
+   * "wa-group", então toda emissão de link falhava em silêncio e o post saía
+   * com o link cru, que não paga comissão. Validado aqui pra que um valor
+   * inválido derrube o comando em vez de custar dinheiro sem avisar.
+   */
+  SHOPEE_SUB_ID: z
+    .string()
+    .regex(/^[A-Za-z0-9]*$/, 'SHOPEE_SUB_ID: só letras e números (a Shopee recusa - e _)')
+    .max(50)
+    .default('wagroup'),
   /** Feed pages per run. Pages are disjoint, so pages x size = products seen. */
   SHOPEE_PAGES: z.coerce.number().int().min(1).max(20).default(5),
   SHOPEE_PAGE_SIZE: z.coerce.number().int().min(1).max(100).default(50),

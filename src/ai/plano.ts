@@ -4,6 +4,7 @@ import { logger } from '../infra/logger.js';
 import { brl } from '../domain/mensagem.js';
 import type { Scored } from '../domain/scoring.js';
 import { clip } from '../util/texto.js';
+import { codigosDoPost } from '../domain/codigo.js';
 import { catalogo, resolverCasting } from '../media/capas.js';
 import { aiEnabled, askJson } from './client.js';
 import { LIMITS } from './limites.js';
@@ -75,10 +76,17 @@ export interface PostPlan {
   respostaPadrao: string;
   bio: string;
   /**
-   * Produtos na ordem escolhida pela IA. `etiqueta` é o que vai impresso no
-   * card; `fala` é o que se diz por cima dele no vídeo.
+   * Post de catálogo: 9 produtos por slide, cada um com um código impresso
+   * embaixo, em vez de um card por produto. Ver `media/cards.ts`.
    */
-  itens: { s: Scored; etiqueta: string; fala: string }[];
+  grade: boolean;
+  /**
+   * Produtos na ordem escolhida pela IA. `etiqueta` é o que vai impresso no
+   * card e `fala` é o que se diz por cima dele no vídeo — os dois vazios na
+   * grade, onde não sobra espaço pra texto por produto. `codigo` é o que a
+   * pessoa comenta pra pedir o link.
+   */
+  itens: { s: Scored; etiqueta: string; fala: string; codigo: string }[];
 }
 
 const MENTIRA =
@@ -146,10 +154,14 @@ function matchIndex(
  */
 function briefing(list: Scored[]): string {
   const precos = list.map((s) => s.offer.price);
+  // O teto é o da VARIAÇÃO mais cara. Prometer "menos de 100" olhando só o
+  // menor preço de cada produto é promessa que quebra na hora do tamanho.
+  const teto = Math.max(...list.map((s) => s.offer.priceMax ?? s.offer.price));
   const faixa =
     `FAIXA DE PREÇO DA LISTA: R$ ${Math.min(...precos).toFixed(2)} a ` +
-    `R$ ${Math.max(...precos).toFixed(2)}. Qualquer "menos de X" que você ` +
-    `escrever tem que ser maior que o mais caro.
+    `R$ ${teto.toFixed(2)}. Qualquer "menos de X" que você ` +
+    `escrever tem que ser maior que o mais caro. Produto marcado "A PARTIR DE" ` +
+    `tem variação mais cara — nunca anuncie o menor preço dele como se fosse o dele.
 
 `;
 
@@ -157,7 +169,9 @@ function briefing(list: Scored[]): string {
     .map((s, i) => {
       const pct = Math.round(s.discount * 100);
       const campos = [
-        `preco ${brl(s.offer.price)}`,
+        s.offer.priceMax !== null
+          ? `preco A PARTIR DE ${brl(s.offer.price)} (variacoes ate ${brl(s.offer.priceMax)})`
+          : `preco ${brl(s.offer.price)}`,
         `desconto ${pct}% (${s.mode === 'history' ? 'medido por nos' : 'anunciado pela loja'})`,
       ];
       if (s.mode === 'history' && s.baseline) campos.push(`preco normal medido ${brl(s.baseline)}`);
@@ -194,7 +208,12 @@ Regras que valem pra cada linha que você escrever:
 
 Responda SOMENTE com JSON válido, sem nenhum texto em volta.`;
 
-function userPrompt(list: Scored[], termos: string[], tema?: string): string {
+function userPrompt(
+  list: Scored[],
+  termos: string[],
+  tema?: string,
+  grade = false,
+): string {
   const publico = config.AI_PUBLICO || 'não informado — deduza pelos produtos';
   const perfil = config.PROFILE_HANDLE || 'não informado';
   const medidos = list.filter((s) => s.mode === 'history').length;
@@ -250,7 +269,10 @@ a escrever uma linha que não cabe.
       capas.length ? ',\n    "casting": "o nome de UMA das capas disponíveis, ou \\"\\""' : ''
     }
   },
-  "ordem": [índices dos produtos na ordem em que aparecem no post],
+  "ordem": [índices dos produtos na ordem em que aparecem no post],${
+    grade
+      ? ''
+      : `
   "slides": [
     {
       "indice": 0,
@@ -258,7 +280,8 @@ a escrever uma linha que não cabe.
       "etiqueta": "frase que vai NO card desse produto, até ${LIMITS.etiqueta} — mire em 30",
       "fala": "o que se diz por cima desse slide no vídeo, uma frase"
     }
-  ],
+  ],`
+  }
   "cta": {
     "headline": "pergunta do último slide, até ${LIMITS.ctaHeadline}",
     "linha1": "o que tem no grupo, até ${LIMITS.ctaLinha}",
@@ -275,14 +298,28 @@ a escrever uma linha que não cabe.
 Sobre "ordem": abra com o produto que segura a pessoa e guarde o mais chocante
 pro fim — o final é o que decide se ela vai no perfil. Não é o mesmo que
 ordenar por desconto.
+${
+  grade
+    ? `
+Sobre o FORMATO: este post é uma GRADE de catálogo. Os ${list.length} produtos
+aparecem 9 por slide, em miniatura, com um código impresso embaixo de cada um —
+e é só isso que a pessoa vê de cada produto. Não existe frase por produto: não
+cabe. Por isso você não devolve "slides".
 
+O que a capa e o slide final têm que fazer, então, muda: quem não comenta um
+código não recebe nada. A capa vende a ideia de que tem coisa demais ali pra ver
+sem parar, e o slide final MANDA a pessoa comentar o código do que ela quiser.
+Fale de "comentar o código", com essas palavras — é a única instrução do post,
+e sem ela a grade vira um catálogo bonito que ninguém pede.`
+    : `
 Sobre "etiqueta": é a frase que aparece SOBRE a foto, logo acima do preço. Ela
 diz por que AQUELE produto merece o slide (uma comparação, o uso, o absurdo do
 preço). Nunca repita o nome do produto — ele já está escrito no card abaixo.
 
 Confira antes de responder: cada etiqueta precisa falar do produto do "indice"
 que ela cita. Etiqueta de camisa na foto do relógio destrói o post inteiro.
-Um slide por produto, sem pular nenhum.`;
+Um slide por produto, sem pular nenhum.`
+}`;
 }
 
 // ─── Geração ────────────────────────────────────────────────────────────────
@@ -323,21 +360,28 @@ export async function postPlan(
   list: Scored[],
   termos: string[],
   tema?: string,
+  grade = false,
 ): Promise<PostPlan> {
   if (!aiEnabled()) throw new Error('REMOTE_AI_API_KEY não está no .env');
   if (!list.length) throw new Error('sem ofertas pra planejar');
 
   log.info(
-    { produtos: list.length, modelo: config.REMOTE_AI_MODEL, tema: tema ?? null },
+    { produtos: list.length, modelo: config.REMOTE_AI_MODEL, tema: tema ?? null, grade },
     'pedindo o plano do post',
   );
 
   const mensagens = [
     { role: 'system' as const, content: SYSTEM },
-    { role: 'user' as const, content: userPrompt(list, termos, tema) },
+    { role: 'user' as const, content: userPrompt(list, termos, tema, grade) },
   ];
 
-  let raw = await askJson(schema, mensagens);
+  // A grade não devolve "slides", que é a parte mais longa do JSON — 27 objetos
+  // com etiqueta e fala não existem aqui. Isso importa mais do que parece: a
+  // Groq RESERVA o `max_tokens` inteiro antes de gerar a primeira letra, então
+  // pedir 2.500 pra um JSON de ~600 desperdiça cota de um balde de 8.000/min.
+  const teto = grade ? 1200 : 2500;
+
+  let raw = await askJson(schema, mensagens, teto);
 
   // Capa e slide final valem pra lista inteira: se prometem "menos de 100" e
   // existe item de R$ 139, o post inteiro nasce mentindo — e isso vai impresso
@@ -352,16 +396,20 @@ export async function postPlan(
   let queixas = conferirTextosGerais(gerais(), list);
   if (queixas.length) {
     log.warn(`preço errado na copy, pedindo correção: ${queixas.map((q) => q.motivo).join(' | ')}`);
-    raw = await askJson(schema, [
-      ...mensagens,
-      {
-        role: 'user' as const,
-        content:
-          'Você errou o preço. Corrija e devolva o JSON inteiro de novo:\n' +
-          queixas.map((q) => `- "${q.texto}" (${q.campo}): ${q.motivo}`).join('\n') +
-          '\nOu troque a frase por uma que não cite preço nenhum.',
-      },
-    ]);
+    raw = await askJson(
+      schema,
+      [
+        ...mensagens,
+        {
+          role: 'user' as const,
+          content:
+            'Você errou o preço. Corrija e devolva o JSON inteiro de novo:\n' +
+            queixas.map((q) => `- "${q.texto}" (${q.campo}): ${q.motivo}`).join('\n') +
+            '\nOu troque a frase por uma que não cite preço nenhum.',
+        },
+      ],
+      teto,
+    );
     queixas = conferirTextosGerais(gerais(), list);
     if (queixas.length) {
       throw new Error(
@@ -394,9 +442,14 @@ export async function postPlan(
   }
 
   const ordem = resolveOrder(raw.ordem, list.length);
+  // Os códigos saem do id do produto, então não dependem da IA nem da ordem —
+  // mas são gerados como conjunto pra garantir que dois produtos do MESMO post
+  // nunca saiam com o mesmo código impresso.
+  const codigos = codigosDoPost(ordem.map((i) => list[i]!.offer.id));
 
   return {
     tema: tema ?? '',
+    grade,
     termos,
     angulo: raw.angulo.trim(),
     capa: {
@@ -422,6 +475,7 @@ export async function postPlan(
       s: list[i]!,
       etiqueta: porProduto.get(i)?.etiqueta ?? '',
       fala: porProduto.get(i)?.fala ?? '',
+      codigo: codigos.get(list[i]!.offer.id)!,
     })),
   };
 }
@@ -437,6 +491,12 @@ const savedSchema = z.object({
   tema: z.string().default(''),
   termos: z.array(z.string()).default([]),
   angulo: z.string().default(''),
+  /**
+   * Sai do `ideia --grade` e chega no `photos` pelo arquivo: quem pediu a grade
+   * pediu no plano, e repetir a flag na hora de gerar as fotos seria uma chance
+   * a mais de o post sair no formato errado.
+   */
+  grade: z.boolean().default(false),
   capa: z
     .object({
       titulo: z.string().default(''),
@@ -463,13 +523,21 @@ const savedSchema = z.object({
         id: z.string(),
         etiqueta: z.string().default(''),
         fala: z.string().default(''),
+        // Guardado, e não só re-derivado: o código já foi IMPRESSO no slide.
+        // Se um produto sumir da busca e o desempate de colisão mudar, o que
+        // vale é o que está na imagem que a pessoa está olhando.
+        codigo: z.string().default(''),
       }),
     )
     .default([]),
 });
 
 /** O que um plano salvo pede: quais produtos, em que ordem, e de que busca. */
-export function planResumo(raw: string): { ids: string[]; termos: string[] } {
+export function planResumo(raw: string): {
+  ids: string[];
+  termos: string[];
+  grade: boolean;
+} {
   const parsed = savedSchema.safeParse(JSON.parse(raw));
   if (!parsed.success) {
     throw new Error('plano inválido: ' + z.prettifyError(parsed.error).slice(0, 160));
@@ -477,6 +545,7 @@ export function planResumo(raw: string): { ids: string[]; termos: string[] } {
   return {
     ids: parsed.data.slides.map((s) => s.id).filter(Boolean),
     termos: parsed.data.termos,
+    grade: parsed.data.grade,
   };
 }
 
@@ -491,15 +560,21 @@ export function loadPlan(raw: string, disponiveis: Scored[]): PostPlan {
   const p = savedSchema.parse(JSON.parse(raw));
   const porId = new Map(disponiveis.map((s) => [s.offer.id, s]));
 
-  const itens = p.slides
-    .map((sl) => {
-      const s = porId.get(sl.id);
-      return s ? { s, etiqueta: clip(sl.etiqueta, LIMITS.etiqueta), fala: sl.fala.trim() } : null;
-    })
-    .filter((x): x is NonNullable<typeof x> => x !== null);
+  const encontrados = p.slides.filter((sl) => porId.has(sl.id));
+  const codigos = codigosDoPost(encontrados.map((sl) => sl.id));
+
+  const itens = encontrados.map((sl) => ({
+    s: porId.get(sl.id)!,
+    etiqueta: clip(sl.etiqueta, LIMITS.etiqueta),
+    fala: sl.fala.trim(),
+    // O do arquivo ganha: plano salvo antes dos códigos existirem não tem o
+    // campo, e aí re-deriva.
+    codigo: sl.codigo || codigos.get(sl.id)!,
+  }));
 
   return {
     tema: p.tema,
+    grade: p.grade,
     termos: p.termos,
     angulo: p.angulo,
     capa: {
@@ -535,6 +610,7 @@ export function planToJson(plan: PostPlan): string {
       gerado_em: new Date().toISOString(),
       modelo: config.REMOTE_AI_MODEL,
       tema: plan.tema,
+      grade: plan.grade,
       termos: plan.termos,
       angulo: plan.angulo,
       capa: plan.capa,
@@ -549,10 +625,12 @@ export function planToJson(plan: PostPlan): string {
         // O id é o que permite reaproveitar este plano depois: o `photos --ia`
         // reencontra o produto por ele. Sem isso o arquivo é só um relatório.
         id: it.s.offer.id,
+        codigo: it.codigo,
         etiqueta: it.etiqueta,
         fala: it.fala,
         produto: it.s.offer.title,
         preco: it.s.offer.price,
+        preco_max: it.s.offer.priceMax,
         desconto: Math.round(it.s.discount * 100),
         link: it.s.offer.offerLink ?? it.s.offer.url,
       })),

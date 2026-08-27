@@ -20,6 +20,16 @@ import { idadeEmTexto, salvar, ultimoSalvo } from './util/arquivo.js';
  * Nenhuma regra de negócio mora aqui.
  */
 
+/**
+ * Quantos produtos a grade pede por padrão: TRÊS slides cheios.
+ *
+ * O card único vive de um produto por slide, então 8 dá um post. A grade come
+ * 9 de uma vez — com o `--top` normal ela sairia com um slide e meio, que é
+ * pior que não ter grade nenhuma. Múltiplo de 9 de propósito: é o que faz o
+ * último slide sair cheio em vez de com três produtos e um vazio ao lado.
+ */
+const GRADE_TOP = 27;
+
 const HELP = `
 Alerta de Preços
 
@@ -38,6 +48,8 @@ Alerta de Preços
   npm run stats       Quantos produtos/preços já foram coletados
 
   Opções:  --tema "…"    O assunto. Se for categoria, muda a busca também
+           --grade       Post de catálogo: 9 produtos por slide, com código
+                         embaixo de cada um (padrão: ${GRADE_TOP} produtos)
            --keywords    "a,b" — os termos na mão
            --top N       Quantos mostrar/enviar (padrão: ${config.TOP_N})
            --skip 1,4    Descarta ofertas da lista (foto ruim) e puxa as próximas
@@ -198,8 +210,9 @@ async function send(): Promise<void> {
 }
 
 async function ideia(): Promise<void> {
+  const grade = flag('grade');
   const { termos, elegiveis } = await selecionar();
-  const picked = (await novos(elegiveis)).slice(0, num('top', 8));
+  const picked = (await novos(elegiveis)).slice(0, num('top', grade ? GRADE_TOP : 8));
 
   if (!picked.length) {
     out.linha('Nenhuma oferta passou nos filtros — sem material pra post.');
@@ -212,6 +225,7 @@ async function ideia(): Promise<void> {
     termos,
     tema: frase('tema'),
     reaproveitar: false,
+    grade,
   });
   out.plano(plan);
 
@@ -229,6 +243,10 @@ async function photos(): Promise<void> {
   if (lido?.aviso) out.linha(lido.aviso);
 
   const planoSalvo = lido?.plano ?? null;
+  // O formato vem do plano quando existe — quem pediu a grade pediu no `ideia`,
+  // e o `photos` só executa. A flag na linha de comando ainda ganha, pra dar
+  // pra re-renderizar em grade um plano que nasceu de cards.
+  const grade = flag('grade') || Boolean(planoSalvo?.grade);
   if (salvo && planoSalvo) {
     out.linha(`\n📋 Usando o plano de ${salvo.file} (${idadeEmTexto(salvo.idade)}).`);
     out.linha('   --novo gera outro do zero · --plano <arquivo> escolhe qual.');
@@ -247,8 +265,12 @@ async function photos(): Promise<void> {
 
   out.linha('\nAvaliando as fotos...');
   const escolha = await conteudo.escolherPelaFoto(pool, {
-    topN: num('top', config.TOP_N),
-    minImagem: Number(texto('min-image') ?? conteudo.corteVisualPadrao()),
+    topN: num('top', grade ? GRADE_TOP : config.TOP_N),
+    // Na grade o corte visual sai de cena por padrão. Ele existe pra barrar
+    // recorte de catálogo em fundo branco, que num card de tela cheia entrega
+    // cara de marketplace — mas a grade é exatamente uma vitrine de recortes em
+    // fundo branco, e ali eles são o formato certo, não o defeito.
+    minImagem: Number(texto('min-image') ?? (grade ? 0 : conteudo.corteVisualPadrao())),
     ordenarPorFoto: flag('visual'),
     ordem: planoSalvo?.ordem,
   });
@@ -283,13 +305,27 @@ async function photos(): Promise<void> {
     tema: frase('tema'),
     salvo,
     reaproveitar: Boolean(planoSalvo),
+    grade,
   });
   out.plano(plan);
 
+  // Antes de gerar: a legenda é escrita dentro do `gerarPost`, e é ela que
+  // carrega os links. Produto vindo do banco chega sem link de afiliado.
+  const emitidos = await ofertas.garantirLinks(plan.itens.map((it) => it.s));
+  if (emitidos) out.linha(`\n🔗 ${emitidos} link(s) de afiliado emitidos e guardados.`);
+
+  const semLink = plan.itens.filter((it) => !it.s.offer.offerLink).length;
+  if (semLink) {
+    out.linha(
+      `\n⚠️  ${semLink} produto(s) sem link de afiliado — a legenda vai sair com o\n` +
+        '   link cru da Shopee, que NÃO paga comissão. Rode de novo mais tarde.',
+    );
+  }
+
   const { dir, cards } = await conteudo.gerarPost(plan);
 
-  out.linha(`Prontas — ${cards.length} cards 1080x1080 em ${dir}/\n`);
-  for (const c of cards) out.linha(`  ${String(c.rank).padStart(2)}. ${c.title.slice(0, 55)}`);
+  out.linha(`Prontas — ${cards.length} imagens 1080x1080 em ${dir}/\n`);
+  for (const c of cards) out.linha(`  ${String(c.rank).padStart(2)}. ${c.title.slice(0, 62)}`);
   out.linha('\n  originais/       foto quadrada da Shopee, se quiser reenquadrar');
   out.linha('  00-LEGENDA.txt   legenda do post + roteiro + comentário fixado');
   out.linha('  00-PLANO.json    o plano inteiro, legível e editável\n');
@@ -314,13 +350,17 @@ async function photosSend(): Promise<void> {
       : 'Como DOCUMENTO: mantém a qualidade. No celular abre em Documentos.\n',
   );
 
-  await grupo.enviarCards(
-    jid,
-    files,
-    { asImage, legenda: grupo.legendaDaPasta(dir) ?? undefined },
-    (i, f) => out.linha(`  ${i + 1}/${files.length}  ${f.split('/').pop()}`),
+  const textos = grupo.textosDaPasta(dir);
+  await grupo.enviarCards(jid, files, { asImage, ...textos }, (i, f) =>
+    out.linha(`  ${i + 1}/${files.length}  ${f.split('/').pop()}`),
   );
 
+  out.linha('\nDepois das imagens vão os textos, um por mensagem:');
+  out.linha(`  ${textos.legenda ? '✅' : '—'} legenda`);
+  out.linha(`  ${textos.comentarioFixado ? '✅' : '—'} comentário fixado`);
+  if (!textos.comentarioFixado) {
+    out.linha('     (post antigo, sem 00-PLANO.json — só a legenda foi enviada)');
+  }
   out.linha('\nPronto. Baixe no celular e poste pelo app do TikTok.\n');
 }
 

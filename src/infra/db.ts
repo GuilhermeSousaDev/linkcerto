@@ -36,7 +36,15 @@ CREATE TABLE IF NOT EXISTS price_snapshot (
   vendor_discount DOUBLE PRECISION,
   captured_at     TIMESTAMPTZ NOT NULL
 );
+-- O link de afiliado, que é o que faz o post render dinheiro. Fica em offer e
+-- não em price_snapshot porque é estável: muda de produto pra produto, não de
+-- leitura pra leitura.
+ALTER TABLE offer ADD COLUMN IF NOT EXISTS offer_link TEXT;
+
 ALTER TABLE price_snapshot ADD COLUMN IF NOT EXISTS vendor_discount DOUBLE PRECISION;
+-- Teto das variações. Mora no snapshot e não em offer porque muda junto do
+-- preço: variação que esgota muda a faixa sem mudar o produto.
+ALTER TABLE price_snapshot ADD COLUMN IF NOT EXISTS price_max DOUBLE PRECISION;
 CREATE INDEX IF NOT EXISTS idx_snap ON price_snapshot (offer_id, captured_at DESC);
 
 CREATE TABLE IF NOT EXISTS sent (
@@ -106,18 +114,22 @@ export async function record(offers: Offer[]): Promise<void> {
     await client.query('BEGIN');
     for (const o of offers) {
       await client.query(
-        `INSERT INTO offer (id, title, url, image_url, shop_name, commission_rate, first_seen_at, last_seen_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+        `INSERT INTO offer (id, title, url, offer_link, image_url, shop_name, commission_rate, first_seen_at, last_seen_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
          ON CONFLICT (id) DO UPDATE SET
            title = EXCLUDED.title, url = EXCLUDED.url, image_url = EXCLUDED.image_url,
+           -- COALESCE e não EXCLUDED direto: uma releitura que venha sem o
+           -- link (a busca por id nem sempre traz) apagaria o que já temos, e
+           -- o post seguinte sairia com link sem rastreio de novo.
+           offer_link = COALESCE(EXCLUDED.offer_link, offer.offer_link),
            shop_name = EXCLUDED.shop_name, commission_rate = EXCLUDED.commission_rate,
            last_seen_at = EXCLUDED.last_seen_at`,
-        [o.id, o.title, o.url, o.imageUrl, o.shopName, o.commissionRate, agora],
+        [o.id, o.title, o.url, o.offerLink, o.imageUrl, o.shopName, o.commissionRate, agora],
       );
       await client.query(
-        `INSERT INTO price_snapshot (offer_id, price, rating, sold, vendor_discount, captured_at)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [o.id, o.price, o.rating, o.sold, o.vendorDiscount, agora],
+        `INSERT INTO price_snapshot (offer_id, price, price_max, rating, sold, vendor_discount, captured_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [o.id, o.price, o.priceMax, o.rating, o.sold, o.vendorDiscount, agora],
       );
     }
     await client.query('COMMIT');
@@ -180,6 +192,20 @@ export async function ultimoEnvio(offerIds: string[]): Promise<Map<string, numbe
     [offerIds],
   );
   return new Map(rows.map((r) => [r.offer_id, Number(r.price)]));
+}
+
+/**
+ * Guarda um link de afiliado recém-emitido.
+ *
+ * `IS NULL` na condição: só preenche buraco, nunca troca um link que já existe.
+ * O link carrega o sub_id de rastreio, e sobrescrever o de um produto que já
+ * saiu num post quebraria a atribuição das vendas daquele post.
+ */
+export async function guardarOfferLink(offerId: string, link: string): Promise<void> {
+  await query('UPDATE offer SET offer_link = $2 WHERE id = $1 AND offer_link IS NULL', [
+    offerId,
+    link,
+  ]);
 }
 
 export async function markSent(offerId: string, price: number): Promise<void> {
@@ -257,14 +283,16 @@ export async function ofertasDoBanco(
 ): Promise<Offer[]> {
   const { rows } = await query<{
     id: string; title: string; url: string; image_url: string | null;
+    offer_link: string | null;
     shop_name: string | null; commission_rate: number | null; price: number;
+    price_max: number | null;
     rating: number | null; sold: string | null; vendor_discount: number | null;
   }>(
-    `SELECT o.id, o.title, o.url, o.image_url, o.shop_name, o.commission_rate,
-            s.price, s.rating, s.sold, s.vendor_discount
+    `SELECT o.id, o.title, o.url, o.offer_link, o.image_url, o.shop_name, o.commission_rate,
+            s.price, s.price_max, s.rating, s.sold, s.vendor_discount
        FROM offer o
        JOIN LATERAL (
-         SELECT price, rating, sold, vendor_discount, captured_at
+         SELECT price, price_max, rating, sold, vendor_discount, captured_at
            FROM price_snapshot ps
           WHERE ps.offer_id = o.id
           ORDER BY captured_at DESC
@@ -285,9 +313,10 @@ export async function ofertasDoBanco(
     id: r.id,
     title: r.title,
     url: r.url,
-    offerLink: null,
+    offerLink: r.offer_link,
     imageUrl: r.image_url,
     price: Number(r.price),
+    priceMax: r.price_max === null ? null : Number(r.price_max),
     vendorDiscount: r.vendor_discount === null ? null : Number(r.vendor_discount),
     rating: r.rating === null ? null : Number(r.rating),
     sold: r.sold === null ? null : Number(r.sold),
@@ -320,14 +349,16 @@ export async function ofertasPorIds(ids: string[]): Promise<Offer[]> {
 
   const { rows } = await query<{
     id: string; title: string; url: string; image_url: string | null;
+    offer_link: string | null;
     shop_name: string | null; commission_rate: number | null; price: number;
+    price_max: number | null;
     rating: number | null; sold: string | null; vendor_discount: number | null;
   }>(
-    `SELECT o.id, o.title, o.url, o.image_url, o.shop_name, o.commission_rate,
-            s.price, s.rating, s.sold, s.vendor_discount
+    `SELECT o.id, o.title, o.url, o.offer_link, o.image_url, o.shop_name, o.commission_rate,
+            s.price, s.price_max, s.rating, s.sold, s.vendor_discount
        FROM offer o
        JOIN LATERAL (
-         SELECT price, rating, sold, vendor_discount
+         SELECT price, price_max, rating, sold, vendor_discount
            FROM price_snapshot ps
           WHERE ps.offer_id = o.id
           ORDER BY captured_at DESC
@@ -341,9 +372,10 @@ export async function ofertasPorIds(ids: string[]): Promise<Offer[]> {
     id: r.id,
     title: r.title,
     url: r.url,
-    offerLink: null,
+    offerLink: r.offer_link,
     imageUrl: r.image_url,
     price: Number(r.price),
+    priceMax: r.price_max === null ? null : Number(r.price_max),
     vendorDiscount: r.vendor_discount === null ? null : Number(r.vendor_discount),
     rating: r.rating === null ? null : Number(r.rating),
     sold: r.sold === null ? null : Number(r.sold),

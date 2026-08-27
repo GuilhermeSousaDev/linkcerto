@@ -145,10 +145,24 @@ function overlaySvg(s: Scored, etiqueta = ''): string {
   const nameBottomY = subY - subSize - 22;
   const nameTopY = nameBottomY - (nameLines.length - 1) * (nameSize + 8);
   const priceY = nameTopY - nameSize - 30;
-  const tagY = priceY - Math.round(priceSize * 0.78) - 20;
+
+  // "A PARTIR DE" quando o produto tem faixa de variação.
+  //
+  // Sem isso o card imprimia o menor preço como se fosse O preço: um produto de
+  // `price` 67,90 cujas variações vão até 133,56 saía anunciado como R$ 67,90,
+  // e quem clicava chegava numa página com outro número. Isso é isca — e o
+  // perfil inteiro se sustenta em não ser isca.
+  const faixa = s.offer.priceMax !== null;
+  const faixaSize = 30;
+  const topoDoPreco = priceY - Math.round(priceSize * 0.78);
+  // Acima do preço e não ao lado: ao lado ele brigaria com o preço riscado,
+  // que já ocupa a direita dessa mesma linha de base.
+  const faixaY = topoDoPreco - 14;
+  const topoDoBloco = faixa ? faixaY - faixaSize : topoDoPreco;
+  const tagY = topoDoBloco - 20;
   // Com etiqueta o degradê sobe mais: ela é amarela e fina, e no primeiro teste
   // caiu na parte clara do gradiente em cima da sola branca de um tênis.
-  const scrimTop = tag ? tagY - tagSize - 180 : priceY - priceSize - 110;
+  const scrimTop = tag ? tagY - tagSize - 180 : topoDoBloco - 110;
 
   const social: string[] = [];
   if (s.offer.rating) social.push(`${s.offer.rating.toFixed(1)} estrelas`);
@@ -196,6 +210,13 @@ function overlaySvg(s: Scored, etiqueta = ''): string {
     <text x="${margin}" y="${tagY}" fill="${ACCENT}"
           font-family="${FONT}" font-weight="800"
           font-size="${fitSize(tag, tagSize, maxW)}">${esc(tag)}</text>`);
+  }
+
+  if (faixa) {
+    parts.push(`
+    <text x="${margin}" y="${faixaY}" fill="#FFFFFF" opacity="0.9"
+          font-family="${FONT}" font-weight="700" font-size="${faixaSize}"
+          letter-spacing="2">A PARTIR DE</text>`);
   }
 
   parts.push(`
@@ -267,6 +288,148 @@ function coverSvg(capa: PostPlan['capa']): string {
   }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">${parts.join('')}</svg>`;
+}
+
+// ─── Grade de produtos ──────────────────────────────────────────────────────
+
+/**
+ * O slide de catálogo: 9 produtos, um código embaixo de cada.
+ *
+ * Muda o que o post PEDE. O card único entrega tudo — foto, preço, nome — e a
+ * pessoa assiste e vai embora satisfeita. A grade entrega só o produto e o
+ * código: pra saber preço e link ela tem que comentar. Comentário empurra o
+ * vídeo no algoritmo e abre a janela de direct, que é por onde o convite do
+ * grupo passa. Ver `domain/codigo.ts`.
+ */
+const GRADE_COLS = 3;
+/** Produtos por slide. Mais que 9 num 1080 e o código fica ilegível no feed. */
+export const POR_GRADE = GRADE_COLS * 3;
+
+const CELULA = Math.round(S / GRADE_COLS);
+const GRADE_IMG = 260;
+const GRADE_IMG_X = Math.round((CELULA - GRADE_IMG) / 2);
+const GRADE_IMG_Y = 8;
+/**
+ * Fundo branco, não o papel da capa: foto de catálogo da Shopee vem recortada
+ * em fundo branco, e sobre o bege as 9 viravam 9 quadrados visíveis. No branco
+ * o produto flutua, que é o efeito que a grade procura.
+ */
+const GRADE_FUNDO = '#FFFFFF';
+
+export interface ItemDaGrade {
+  s: Scored;
+  codigo: string;
+}
+
+/** Pílula centrada num x, em vez de ancorada à esquerda como a `pillSvg`. */
+function pilulaCentrada(
+  texto: string,
+  cx: number,
+  y: number,
+  fontSize: number,
+  h: number,
+  bg: string,
+  fg: string,
+): string {
+  // 6% de folga sobre a estimativa. O `textWidth` usa uma largura MÉDIA por
+  // caractere, e código é caixa alta em peso 800: um "BNW-TVR-MWG", com três
+  // letras largas, passava da pílula e saía cortado nas duas pontas.
+  const w = Math.round(textWidth(texto, fontSize) * 1.06 + fontSize * 1.1);
+  return `
+    <rect x="${Math.round(cx - w / 2)}" y="${y}" width="${w}" height="${h}"
+          rx="${Math.round(h / 2)}" ry="${Math.round(h / 2)}" fill="${bg}"/>
+    <text x="${cx}" y="${y + h / 2}" fill="${fg}" font-family="${FONT}"
+          font-weight="800" font-size="${fontSize}" text-anchor="middle"
+          dominant-baseline="central">${esc(texto)}</text>`;
+}
+
+/**
+ * Onde cada célula começa, centralizada.
+ *
+ * O último slide quase nunca vem cheio — sobram 2, 5, 7 produtos depois dos
+ * filtros. Ancorado no canto, esse slide saía com os produtos amontoados em
+ * cima à esquerda e dois terços de branco embaixo, com cara de erro de
+ * renderização. Centralizado, um slide de 2 produtos parece uma escolha.
+ */
+function posicoesDaGrade(n: number): { x: number; y: number }[] {
+  const linhas = Math.ceil(n / GRADE_COLS);
+  const topo = Math.round((S - linhas * CELULA) / 2);
+
+  return Array.from({ length: n }, (_, i) => {
+    const linha = Math.floor(i / GRADE_COLS);
+    const nestaLinha = Math.min(GRADE_COLS, n - linha * GRADE_COLS);
+    const esquerda = Math.round((S - nestaLinha * CELULA) / 2);
+    return {
+      x: esquerda + (i - linha * GRADE_COLS) * CELULA,
+      y: topo + linha * CELULA,
+    };
+  });
+}
+
+function gradeSvg(itens: ItemDaGrade[]): string {
+  const parts: string[] = [];
+  const posicoes = posicoesDaGrade(itens.length);
+
+  itens.forEach((it, i) => {
+    const { x: x0, y: y0 } = posicoes[i]!;
+    const cx = x0 + CELULA / 2;
+
+    // Preço no canto da foto. O "+" diz que existe variação mais cara sem
+    // gastar as 11 letras de "a partir de", que não cabem numa célula de 360.
+    const preco = brl(it.s.offer.price) + (it.s.offer.priceMax !== null ? '+' : '');
+    parts.push(
+      pilulaCentrada(
+        preco,
+        x0 + GRADE_IMG_X + 62,
+        y0 + GRADE_IMG_Y + GRADE_IMG - 36,
+        24,
+        34,
+        ACCENT,
+        INK,
+      ),
+    );
+
+    parts.push(`
+    <text x="${cx}" y="${y0 + 292}" fill="${INK}" opacity="0.55"
+          font-family="${FONT}" font-weight="700" font-size="17"
+          text-anchor="middle" letter-spacing="3">CODIGO</text>`);
+
+    parts.push(pilulaCentrada(it.codigo, cx, y0 + 304, 26, 40, INK, '#FFFFFF'));
+  });
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">${parts.join('')}</svg>`;
+}
+
+/** Um slide de grade: fundo branco, as fotos nas células, códigos por cima. */
+async function renderGrade(
+  itens: ItemDaGrade[],
+  originais: Map<string, string>,
+  out: string,
+): Promise<void> {
+  const posicoes = posicoesDaGrade(itens.length);
+  const fotos = await Promise.all(
+    itens.map(async (it, i) => {
+      const { x, y } = posicoes[i]!;
+      return {
+        // `contain` e não `cover`: recortar produto de catálogo corta a manga da
+        // camisa. Aqui o produto inteiro tem que aparecer — é o que a pessoa
+        // está escolhendo.
+        input: await sharp(originais.get(it.s.offer.id)!)
+          .resize(GRADE_IMG, GRADE_IMG, { fit: 'contain', background: GRADE_FUNDO })
+          .toBuffer(),
+        left: x + GRADE_IMG_X,
+        top: y + GRADE_IMG_Y,
+      };
+    }),
+  );
+
+  await sharp({ create: { width: S, height: S, channels: 3, background: GRADE_FUNDO } })
+    .composite([
+      ...fotos,
+      { input: Buffer.from(gradeSvg(itens)), top: 0, left: 0 },
+    ])
+    .jpeg({ quality: 94, mozjpeg: true, chromaSubsampling: '4:4:4' })
+    .toFile(out);
 }
 
 // ─── Capa com retrato ───────────────────────────────────────────────────────
@@ -650,27 +813,52 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
 
   const out: PhotoOut[] = [];
 
-  // Numeração: 01 é a capa, produtos no meio, CTA fecha. Assim o post já sai na
-  // ordem certa ao importar tudo de uma vez.
+  // Os originais primeiro, todos: na grade uma imagem só é composta com outras
+  // oito, então não dá pra baixar e renderizar no mesmo passo. Numerados pela
+  // posição do PRODUTO, que é independente da numeração dos slides — na grade
+  // nove produtos cabem num slide só.
+  const originais = new Map<string, string>();
   for (const [i, it] of items.entries()) {
-    const rank = i + 2;
-    const base = `${String(rank).padStart(2, '0')}-${slug(it.s.offer.title)}`;
-    const original = resolve(origDir, `${base}.jpg`);
+    const nome = `${String(i + 1).padStart(2, '0')}-${slug(it.s.offer.title)}.jpg`;
+    const original = resolve(origDir, nome);
     await download(it.s.offer.imageUrl as string, original);
+    originais.set(it.s.offer.id, original);
+  }
 
-    const path = resolve(outDir, `${base}.jpg`);
-    await renderCard(original, overlaySvg(it.s, it.etiqueta), path);
-    out.push({ rank, title: it.s.offer.title, path });
+  // Numeração: 01 é a capa, conteúdo no meio, CTA fecha. Assim o post já sai na
+  // ordem certa ao importar tudo de uma vez.
+  if (plan.grade) {
+    for (let i = 0; i * POR_GRADE < items.length; i++) {
+      const fatia = items
+        .slice(i * POR_GRADE, (i + 1) * POR_GRADE)
+        .map((it) => ({ s: it.s, codigo: it.codigo }));
+
+      const rank = i + 2;
+      const path = resolve(outDir, `${String(rank).padStart(2, '0')}-GRADE.jpg`);
+      await renderGrade(fatia, originais, path);
+      out.push({ rank, title: `grade com ${fatia.length} produto(s)`, path });
+    }
+  } else {
+    for (const [i, it] of items.entries()) {
+      const rank = i + 2;
+      const path = resolve(outDir, `${String(rank).padStart(2, '0')}-${slug(it.s.offer.title)}.jpg`);
+      await renderCard(originais.get(it.s.offer.id)!, overlaySvg(it.s, it.etiqueta), path);
+      out.push({ rank, title: it.s.offer.title, path });
+    }
   }
 
   const first = items[0];
   if (first) {
-    const src = resolve(origDir, `02-${slug(first.s.offer.title)}.jpg`);
+    const src = originais.get(first.s.offer.id)!;
 
     // Com retrato a capa é outra coisa: papel claro, manchete preta e um rosto
     // embaixo. Sem retrato — pasta vazia, casting que a IA não escolheu — cai
     // na foto do produto desfocada, que é o que sempre foi. O fallback importa:
     // ninguém deve precisar ter foto na pasta pra conseguir gerar um post.
+    // Calculado antes de a capa entrar em `out`: o CTA vem depois do último
+    // slide de CONTEÚDO, e a capa não é conteúdo.
+    const ctaRank = out.length + 2;
+
     const capaPath = resolve(outDir, '01-CAPA.jpg');
     const retrato = plan.capa.casting ? pegarFoto(plan.capa.casting) : null;
 
@@ -684,11 +872,20 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
         .toFile(capaPath);
     }
 
+    const ctaPath = resolve(outDir, `${String(ctaRank).padStart(2, '0')}-CTA.jpg`);
     const ctaBg = await sharp(src).resize(S, S, { fit: 'cover' }).blur(30).toBuffer();
     await sharp(ctaBg)
       .composite([{ input: Buffer.from(ctaSvg(plan.cta)), top: 0, left: 0 }])
       .jpeg({ quality: 94, mozjpeg: true })
-      .toFile(resolve(outDir, `${String(items.length + 2).padStart(2, '0')}-CTA.jpg`));
+      .toFile(ctaPath);
+
+    // Capa e CTA entram na lista devolvida. Ficavam de fora, e no card único
+    // isso passava: a numeração começando em 02 já sugeria a capa. Na grade os
+    // 9 produtos viram UMA linha, então o relatório dizia "2 cards" pra um post
+    // de 4 imagens — e some justamente a capa e o slide final, que é onde a
+    // pessoa procura primeiro quando desconfia que faltou coisa.
+    out.unshift({ rank: 1, title: `CAPA — ${plan.capa.titulo}`, path: capaPath });
+    out.push({ rank: ctaRank, title: `SLIDE FINAL — ${plan.cta.headline}`, path: ctaPath });
   }
 
   const produtos = items.map((it) => it.s);
@@ -725,6 +922,28 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
     }
   }
 
+  // Na grade o código impresso é a única coisa que a pessoa tem pra pedir o
+  // produto. Sem esta tabela aqui, o direct chega com "CHB-DNA-UZU" e você não
+  // tem como saber de qual dos 27 produtos ela está falando.
+  const tabela: string[] = [];
+  if (plan.grade) {
+    tabela.push(
+      '',
+      '═'.repeat(60),
+      'CÓDIGO → PRODUTO (é isto que você responde no direct)',
+      '═'.repeat(60),
+      '',
+    );
+    for (const it of items) {
+      const faixa = it.s.offer.priceMax !== null ? ` a ${brl(it.s.offer.priceMax)}` : '';
+      tabela.push(
+        `${it.codigo}   ${brl(it.s.offer.price)}${faixa}   ${it.s.offer.title.slice(0, 52)}`,
+        `             ${it.s.offer.offerLink ?? it.s.offer.url}`,
+        '',
+      );
+    }
+  }
+
   writeFileSync(
     resolve(outDir, '00-LEGENDA.txt'),
     [
@@ -738,6 +957,7 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
       ...produtos.map(
         (s, i) => `[${i + 1}] ${brl(s.offer.price)} — ${s.offer.offerLink ?? s.offer.url}`,
       ),
+      ...tabela,
     ].join('\n') + '\n',
     'utf8',
   );

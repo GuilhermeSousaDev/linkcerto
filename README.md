@@ -53,6 +53,7 @@ serve — o padrão é a [Groq](https://console.groq.com), que tem free tier.
 | `npm run db:up` / `db:down` | Sobe / para o Postgres |
 
 Opções: `--top N` (quantos), `--tema "…"` (o assunto do post),
+`--grade` (post de catálogo, 9 produtos por slide com código),
 `--keywords "a,b"` (os termos na mão), `--skip 1,4` (descarta
 foto ruim), `--repetir` (aceita produto já postado), `--novo` (ignora o plano
 salvo), `--lote F` (usa um lote salvo), `--sem-filtro` (não descarta por
@@ -522,6 +523,89 @@ banco de imagem livre não tem rosto conhecido. Essas você põe à mão.
 > **Rosto de pessoa real em post monetizado é uso comercial de imagem** — é o
 > motivo de a pasta `comedia` ser manual. Quem entra ali é escolha sua.
 
+### A grade e os códigos
+
+`--grade` troca o formato do post: em vez de um card por produto, sai uma
+**grade de catálogo** — 9 produtos por slide, em miniatura, com um código
+impresso embaixo de cada um.
+
+```bash
+npm run ideia -- --tema camisa masculina --grade   # plano com 18 produtos
+npm run photos                                     # segue o plano, sai em grade
+```
+
+O `--grade` vive no **plano**: quem pediu a grade pediu no `ideia`, e o `photos`
+lê isso do arquivo. Passar `--grade` no `photos` ainda funciona e ganha do
+arquivo — serve pra re-renderizar em grade um plano que nasceu de cards, sem
+gerar copy nova.
+
+Como a grade come 9 produtos por slide, ela puxa **27** por padrão em vez dos 8
+do post normal (`--top` continua mandando).
+
+**O código não vem da Shopee.** A API de afiliado não tem campo de código
+nenhum — os 25 campos do `ProductOfferV2` só identificam produto por `itemId` e
+`shopId`, dois inteiros longos que ninguém digita num comentário. O código é
+invenção nossa, derivado do id do produto: alfabeto sem vogal (nenhum código
+forma palavra) e sem `I`/`O` (que viram `1` e `0` na tela do celular).
+
+E é ele que muda o que o post pede. O card único entrega tudo — foto, preço,
+nome — e a pessoa assiste satisfeita e vai embora. A grade entrega o produto e o
+código: pra saber preço e link ela **tem que comentar**. Comentário empurra o
+vídeo no algoritmo e abre a janela de direct, que é por onde o convite do grupo
+passa.
+
+A tabela `código → produto → link` sai no `00-LEGENDA.txt`, abaixo da linha
+dupla. É o que você consulta quando o direct chega escrito só `CHB-DNA-UZU`.
+
+O corte visual (`MIN_IMAGE_SCORE`) **sai de cena na grade**, por padrão. Ele
+existe pra barrar recorte de catálogo em fundo branco, que num card de tela
+cheia entrega cara de marketplace — mas a grade é exatamente uma vitrine de
+recortes em fundo branco, e ali eles são o formato certo, não o defeito.
+
+### O link de afiliado
+
+É o que faz o post render dinheiro, e é o mais fácil de perder de vista: um
+link sem rastreio funciona igual pra quem clica, compra igual, e não paga nada
+pra você. Dois cuidados, os dois já resolvidos no código:
+
+**`SHOPEE_SUB_ID` só aceita letras e números.** Hífen e underscore voltam como
+`error [11001]: Params Error : invalid sub id`, e a emissão do link falha em
+silêncio — o post sai com o link cru da Shopee. O padrão antigo era `wa-group`,
+que caía exatamente nisso. Agora é `wagroup`, e um valor inválido derruba o
+comando na largada em vez de custar comissão sem avisar.
+
+**O link fica guardado.** O feed devolve `offerLink` junto do produto, mas o
+`photos` alcança os produtos por id, a partir do plano salvo — e o banco não
+guardava esse campo, então toda legenda saía com o link cru. Agora `offer` tem
+a coluna `offer_link`, e o que ainda faltar é emitido e gravado antes de gerar
+as imagens:
+
+```
+🔗 3 link(s) de afiliado emitidos e guardados.
+```
+
+Produto que já estava no banco de antes preenche sozinho na primeira vez que
+entrar num post. Se a emissão falhar, o comando avisa em vez de seguir calado:
+
+```
+⚠️  2 produto(s) sem link de afiliado — a legenda vai sair com o
+   link cru da Shopee, que NÃO paga comissão. Rode de novo mais tarde.
+```
+
+### "A partir de": o preço que não é o preço
+
+A Shopee devolve `price` (o menor entre as variações) e `priceMax` (o maior).
+Numa busca real por `camisa masculina`, **35 dos 50 produtos** tinham faixa — um
+deles anunciava R$ 67,90 com variações até R$ 133,56.
+
+O card imprimia só o menor, como se fosse **o** preço. Agora:
+
+* card único: o preço ganha um **A PARTIR DE** em cima;
+* grade: o preço sai com um `+` (`R$ 67,90+`), que é o que cabe numa célula;
+* a IA recebe a faixa no briefing e o teto de `"menos de X"` passa a ser a
+  variação mais cara, não o menor preço — antes dava pra prometer "tudo abaixo
+  de 100" numa lista com um produto que chega a 133.
+
 ### A foto é escolhida, não sorteada
 
 Muito "produto" da Shopee é recorte de catálogo em fundo branco, que dá cara de
@@ -548,8 +632,23 @@ npm run photos:send -- --dir data/photos/2026-08-17
 npm run photos:send -- --as-image   # vai pra galeria, mas recomprimido
 ```
 
-Vai como **documento** por padrão, pra manter a qualidade. A legenda vai por
-último, fácil de copiar no celular sem rolar pra cima.
+Vai como **documento** por padrão, pra manter a qualidade.
+
+Depois das imagens vão os textos, **um por mensagem**, com um rótulo antes de
+cada um:
+
+| | |
+|---|---|
+| 📝 **Legenda** | o que você cola na hora de publicar |
+| 📌 **Comentário fixado** | o primeiro comentário, que você fixa depois de postar |
+
+Rótulo e texto em mensagens separadas de propósito: no celular você copia
+segurando a mensagem, e ela vem inteira — rótulo junto do texto significaria
+apagar "LEGENDA:" à mão toda vez, dentro do app do TikTok.
+
+Os dois saem do `00-PLANO.json`, que tem os campos separados. Post antigo, sem
+esse arquivo, ainda manda a legenda (extraída do `00-LEGENDA.txt`) e avisa que
+o comentário não foi junto.
 
 ---
 

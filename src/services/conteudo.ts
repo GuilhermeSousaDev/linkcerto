@@ -14,6 +14,8 @@ export interface PlanoSalvo {
   ordem: Map<string, number>;
   /** Os termos que trouxeram esses produtos. */
   termos: string[];
+  /** Se este plano foi feito pra sair em grade de catálogo. */
+  grade: boolean;
 }
 
 /**
@@ -22,11 +24,11 @@ export interface PlanoSalvo {
  */
 export function lerPlanoSalvo(salvo: Salvo): { plano: PlanoSalvo | null; aviso?: string } {
   try {
-    const { ids, termos } = planResumo(salvo.raw);
+    const { ids, termos, grade } = planResumo(salvo.raw);
     if (!ids.length) {
       return { plano: null, aviso: `⚠️  ${salvo.file} não tem os ids dos produtos (plano antigo).` };
     }
-    return { plano: { ordem: new Map(ids.map((id, i) => [id, i])), termos } };
+    return { plano: { ordem: new Map(ids.map((id, i) => [id, i])), termos, grade } };
   } catch (err) {
     return { plano: null, aviso: `⚠️  Não consegui ler ${salvo.file} (${(err as Error).message}).` };
   }
@@ -84,10 +86,22 @@ export async function escolherPelaFoto(
  */
 export async function planoDoPost(
   produtos: Scored[],
-  opts: { termos: string[]; tema?: string; salvo?: Salvo | null; reaproveitar: boolean },
+  opts: {
+    termos: string[];
+    tema?: string;
+    salvo?: Salvo | null;
+    reaproveitar: boolean;
+    /** Post de catálogo em grade. Ignorado ao reaproveitar: o plano já sabe. */
+    grade?: boolean;
+  },
 ): Promise<PostPlan> {
-  if (opts.salvo && opts.reaproveitar) return loadPlan(opts.salvo.raw, produtos);
-  return postPlan(produtos, opts.termos, opts.tema);
+  if (opts.salvo && opts.reaproveitar) {
+    const salvo = loadPlan(opts.salvo.raw, produtos);
+    // O `--grade` na linha de comando ganha do arquivo: permite renderizar em
+    // grade um plano que nasceu de cards, sem gerar copy nova.
+    return opts.grade ? { ...salvo, grade: true } : salvo;
+  }
+  return postPlan(produtos, opts.termos, opts.tema, opts.grade ?? false);
 }
 
 export interface PostGerado {

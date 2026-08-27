@@ -4,10 +4,11 @@ import {
   ofertasDoBanco,
   ofertasPorIds,
   postedSince,
+  guardarOfferLink,
   quantasNoBanco,
   record,
 } from '../infra/db.js';
-import { fetchByIds, fetchOffers } from '../infra/shopee.js';
+import { affiliateLink, fetchByIds, fetchOffers } from '../infra/shopee.js';
 import { findNiche, keywords } from '../domain/niches.js';
 import { rank, type Scored } from '../domain/scoring.js';
 import { aiEnabled, filtrarPublico, searchTerms, type ForaDoPublico } from '../ai/index.js';
@@ -220,6 +221,34 @@ export async function conferirPrecos(
  */
 export async function registrar(list: Scored[]): Promise<void> {
   await record(list.map((s) => s.offer));
+}
+
+/**
+ * Garante link de afiliado em todo produto que vai virar post.
+ *
+ * O `send` já fazia isso por conta própria (ver `grupo.enviar`), mas o post do
+ * TikTok não: ele lia `offerLink ?? url` direto, e como os produtos chegam do
+ * banco pelo id, o `offerLink` vinha nulo e o legenda saía com o link cru da
+ * Shopee. Post bonito, sem rastreio nenhum — venda feita por ele não pagava
+ * comissão. Agora o banco guarda o link (ver `offer.offer_link`), e o que ainda
+ * faltar é emitido aqui e gravado, pra não ser emitido de novo amanhã.
+ *
+ * Falha em emitir não derruba o post: cai no link cru, avisando, que é o
+ * comportamento que já existia — só que agora visível.
+ */
+export async function garantirLinks(list: Scored[]): Promise<number> {
+  const faltando = list.filter((s) => !s.offer.offerLink);
+  let emitidos = 0;
+
+  for (const s of faltando) {
+    const link = await affiliateLink(s.offer);
+    if (link === s.offer.url) continue; // a emissão falhou; `affiliateLink` já avisou
+    s.offer.offerLink = link;
+    await guardarOfferLink(s.offer.id, link);
+    emitidos++;
+  }
+
+  return emitidos;
 }
 
 export const aprovadas = (list: Scored[], comFoto = false): Scored[] =>

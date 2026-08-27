@@ -50,17 +50,33 @@ export function plano(p: PostPlan): void {
     p.capa.variantes.forEach((v) => linha(`     • ${v}`));
   }
 
-  linha('\n📸 SLIDES (nesta ordem)');
-  p.itens.forEach((it, i) => {
-    linha(`   ${String(i + 1).padStart(2)}. ${it.etiqueta || '— (sem frase)'}`);
-    linha(`       ${brl(it.s.offer.price)} · ${it.s.offer.title.slice(0, 52)}`);
-    if (it.fala) linha(`       🗣️  ${it.fala}`);
-  });
+  const faixaDe = (it: PostPlan['itens'][number]) =>
+    it.s.offer.priceMax !== null ? `${brl(it.s.offer.price)}+` : brl(it.s.offer.price);
+
+  if (p.grade) {
+    // Na grade o que importa por produto é o código: é ele que a pessoa comenta
+    // e é por ele que o direct chega.
+    linha('\n🧾 GRADE (9 por slide, nesta ordem)');
+    p.itens.forEach((it, i) => {
+      linha(
+        `   ${String(i + 1).padStart(2)}. ${it.codigo}  ${faixaDe(it).padStart(10)}  ` +
+          it.s.offer.title.slice(0, 44),
+      );
+    });
+    linha('\n   A tabela código → link vai pro 00-LEGENDA.txt.');
+  } else {
+    linha('\n📸 SLIDES (nesta ordem)');
+    p.itens.forEach((it, i) => {
+      linha(`   ${String(i + 1).padStart(2)}. ${it.etiqueta || '— (sem frase)'}`);
+      linha(`       ${faixaDe(it)} · ${it.s.offer.title.slice(0, 52)}`);
+      if (it.fala) linha(`       🗣️  ${it.fala}`);
+    });
+  }
 
   // Card sem etiqueta ainda renderiza (foto, preço, nome, prova social), só
   // perde a faixa amarela. Vale avisar: ou a IA pulou o produto, ou a etiqueta
   // dela citava um preço que não era o daquele item e foi descartada.
-  const semFrase = p.itens.filter((it) => !it.etiqueta).length;
+  const semFrase = p.grade ? 0 : p.itens.filter((it) => !it.etiqueta).length;
   if (semFrase) {
     linha(
       `\n⚠️  ${semFrase} de ${p.itens.length} slides sem frase — o card sai sem a faixa\n` +

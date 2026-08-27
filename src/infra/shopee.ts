@@ -11,7 +11,19 @@ export interface Offer {
   /** Affiliate link handed back by the feed — already trackable. */
   offerLink: string | null;
   imageUrl: string | null;
+  /**
+   * O MENOR preço entre as variações. É o que a Shopee chama de `price`, e é
+   * igual ao `priceMin` na prática.
+   */
   price: number;
+  /**
+   * O MAIOR preço entre as variações, quando existe faixa.
+   *
+   * `null` quando o produto tem preço único. Importa porque anunciar "R$ 67,90"
+   * num produto cujas variações vão até R$ 133,56 é isca: a pessoa chega na
+   * página e o preço é outro. Ver `temFaixa`.
+   */
+  priceMax: number | null;
   /** Vendor-declared discount, 0..1. Marketing copy — treat with suspicion. */
   vendorDiscount: number | null;
   rating: number | null;
@@ -33,7 +45,7 @@ query ProductOffer($page: Int, $limit: Int, $keyword: String, $sortType: Int, $l
   productOfferV2(page: $page, limit: $limit, keyword: $keyword, sortType: $sortType, listType: $listType) {
     nodes {
       itemId shopId productName productLink offerLink imageUrl
-      price priceMin priceDiscountRate sales ratingStar
+      price priceMin priceMax priceDiscountRate sales ratingStar
       commissionRate shopName
     }
     pageInfo { page limit hasNextPage }
@@ -46,7 +58,7 @@ query Item($itemId: Int64) {
   productOfferV2(itemId: $itemId, limit: 1) {
     nodes {
       itemId shopId productName productLink offerLink imageUrl
-      price priceMin priceDiscountRate sales ratingStar
+      price priceMin priceMax priceDiscountRate sales ratingStar
       commissionRate shopName
     }
   }
@@ -132,6 +144,12 @@ function toOffer(n: Record<string, unknown>): Offer | null {
   const rate = num(n['priceDiscountRate']);
   const vendorDiscount = rate !== null && rate > 0 && rate < 100 ? rate / 100 : null;
 
+  // Só conta como faixa se o topo for mesmo mais alto: a maioria dos produtos
+  // devolve priceMax igual ao price, e tratar isso como faixa poria "a partir
+  // de" em card de produto que tem um preço só.
+  const max = num(n['priceMax']);
+  const priceMax = max !== null && max > price * 1.02 ? max : null;
+
   return {
     id: `${n['shopId']}_${n['itemId']}`,
     title: String(n['productName'] ?? ''),
@@ -139,6 +157,7 @@ function toOffer(n: Record<string, unknown>): Offer | null {
     offerLink: (n['offerLink'] as string) || null,
     imageUrl: (n['imageUrl'] as string) || null,
     price,
+    priceMax,
     vendorDiscount,
     rating: num(n['ratingStar']),
     sold: num(n['sales']),
@@ -242,7 +261,9 @@ export async function affiliateLink(offer: Offer): Promise<string> {
   try {
     const data = await request<{ generateShortLink: { shortLink: string } }>(
       SHORT_LINK_MUTATION,
-      { input: { originUrl: offer.url, subIds: [config.SHOPEE_SUB_ID] } },
+      // Sub id vazio vai como lista vazia, não como [''] — a API aceita as duas
+      // primeiras e recusa a terceira.
+      { input: { originUrl: offer.url, subIds: config.SHOPEE_SUB_ID ? [config.SHOPEE_SUB_ID] : [] } },
     );
     return data.generateShortLink?.shortLink || offer.url;
   } catch (err) {

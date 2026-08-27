@@ -112,7 +112,7 @@ export const cardsDaPasta = (dir: string): string[] =>
 export async function enviarCards(
   jid: string,
   files: string[],
-  opts: { asImage: boolean; legenda?: string },
+  opts: { asImage: boolean; legenda?: string | null; comentarioFixado?: string | null },
   aoEnviar: (i: number, file: string) => void,
 ): Promise<void> {
   const wa = new WhatsApp();
@@ -127,15 +127,63 @@ export async function enviarCards(
         await new Promise((r) => setTimeout(r, espera));
       }
     }
-    if (opts.legenda) await wa.send(jid, { text: opts.legenda });
+
+    // Rótulo e texto vão em mensagens SEPARADAS. No celular você copia segurando
+    // a mensagem, e ela vem inteira: rótulo junto do texto significa apagar
+    // "LEGENDA:" à mão toda vez, dentro do app do TikTok.
+    if (opts.legenda) {
+      await wa.send(jid, { text: '📝 LEGENDA — copie a próxima mensagem' });
+      await wa.send(jid, { text: opts.legenda });
+    }
+    // Por último porque é o que você usa por último: depois de publicado, é o
+    // primeiro comentário do post, que você mesmo fixa.
+    if (opts.comentarioFixado) {
+      await wa.send(jid, { text: '📌 COMENTÁRIO FIXADO — poste e fixe logo depois' });
+      await wa.send(jid, { text: opts.comentarioFixado });
+    }
   } finally {
     await wa.close();
   }
 }
 
 /** Só a parte de cima do 00-LEGENDA.txt — abaixo da linha dupla é referência. */
-export function legendaDaPasta(dir: string): string | null {
+function legendaDoTxt(dir: string): string | null {
   const file = join(dir, '00-LEGENDA.txt');
   if (!existsSync(file)) return null;
   return readFileSync(file, 'utf8').split('═'.repeat(60))[0]?.trim() || null;
+}
+
+export interface TextosDoPost {
+  legenda: string | null;
+  comentarioFixado: string | null;
+}
+
+/**
+ * Os textos que você vai colar no celular.
+ *
+ * Lidos do 00-PLANO.json, não do .txt: o JSON tem os campos separados, enquanto
+ * o .txt é um relatório pra humano ler. Puxar o comentário fixado de lá seria
+ * caçar um título entre linhas, e qualquer ajuste no relatório quebraria o
+ * envio em silêncio. O .txt fica como reserva só pra legenda, que é a primeira
+ * coisa do arquivo e por isso dá pra extrair com segurança.
+ */
+export function textosDaPasta(dir: string): TextosDoPost {
+  const plano = join(dir, '00-PLANO.json');
+
+  if (existsSync(plano)) {
+    try {
+      const p = JSON.parse(readFileSync(plano, 'utf8')) as {
+        legenda?: string;
+        comentario_fixado?: string;
+      };
+      return {
+        legenda: p.legenda?.trim() || legendaDoTxt(dir),
+        comentarioFixado: p.comentario_fixado?.trim() || null,
+      };
+    } catch {
+      // Plano ilegível não impede o envio: a legenda ainda sai do .txt.
+    }
+  }
+
+  return { legenda: legendaDoTxt(dir), comentarioFixado: null };
 }
