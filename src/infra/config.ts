@@ -64,7 +64,13 @@ const schema = z.object({
   MIN_RATING: z.coerce.number().min(0).max(5).default(4.3),
   MIN_SALES: z.coerce.number().int().min(0).default(100),
   /** Minimum discount to bother sending. */
-  MIN_DISCOUNT: z.coerce.number().min(0).max(1).default(0.2),
+  MIN_DISCOUNT: z.coerce.number().min(0).max(1).default(0.1),
+  /**
+   * Produto consagrado passa mesmo sem desconto: nota e vendas acima disto são
+   * a prova de que vale a compra. Não é vendido como promoção — ver `semDesconto`.
+   */
+  TOP_RATING: z.coerce.number().min(0).max(5).default(4.7),
+  TOP_SALES: z.coerce.number().int().min(0).default(1000),
   /**
    * Corte visual da foto (0-1). Abaixo disso a imagem é recorte de catálogo em
    * fundo branco, que no vídeo entrega cara de marketplace. Ver imagescore.ts.

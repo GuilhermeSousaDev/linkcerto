@@ -1,5 +1,6 @@
 import { brl } from '../domain/mensagem.js';
 import type { Scored } from '../domain/scoring.js';
+import { rotuloProduto } from '../domain/produto.js';
 import type { PostPlan, ForaDoPublico } from '../ai/index.js';
 import type { ImageScore } from '../media/imagescore.js';
 
@@ -14,6 +15,8 @@ export function oferta(s: Scored, i: number, foto?: ImageScore): void {
 
   linha(`${String(i + 1).padStart(2)}. [${s.score.toFixed(0).padStart(3)}] ${modo}  -${pct}%  ${brl(s.offer.price)}`);
   linha(`    ${s.offer.title.slice(0, 70)}`);
+  const rotulo = rotuloProduto(s.produto);
+  if (rotulo) linha(`    ${rotulo}`);
   if (s.baseline) {
     linha(`    preço normal medido: ${brl(s.baseline)}${s.isLowest ? '  🏆 menor já visto' : ''}`);
   }

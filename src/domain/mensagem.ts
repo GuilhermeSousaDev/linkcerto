@@ -1,4 +1,5 @@
 import type { Scored } from './scoring.js';
+import { rotuloProduto, tituloHonesto } from './produto.js';
 
 /**
  * Texto do WhatsApp.
@@ -29,6 +30,7 @@ export const brl = (v: number) =>
  * coisa.
  */
 function anchorPrice(s: Scored): { value: number; medido: boolean } | null {
+  if (s.semDesconto) return null;
   if (s.mode === 'history' && s.baseline && s.baseline > s.offer.price) {
     return { value: s.baseline, medido: true };
   }
@@ -42,6 +44,8 @@ function anchorPrice(s: Scored): { value: number; medido: boolean } | null {
 /** Chamada de abertura. Varia pela característica da oferta, não aleatoriamente. */
 function hook(s: Scored): string {
   if (s.isLowest) return 'MENOR PREÇO QUE JÁ MEDIMOS 🔥';
+  // Entrou pela nota, não pelo desconto: a chamada vende a aprovação.
+  if (s.semDesconto) return 'QUEM COMPROU APROVOU ⭐';
 
   const a = anchorPrice(s);
   // Só cabe quando temos baseline medido pra contrapor à alegação da loja.
@@ -51,8 +55,11 @@ function hook(s: Scored): string {
     if (lojaPct > realPct + 10) return `A LOJA DIZ ${lojaPct}%. O REAL É ${realPct}% 👀`;
   }
 
-  if (s.discount >= 0.6) return 'ISSO É UM ABSURDO 🔥';
-  if (s.discount >= 0.45) return 'CAIU MUITO 🔥';
+  // Chamada forte só com queda que NÓS medimos. Em cima do "de" da loja ela
+  // assina embaixo de uma âncora inflada — foi assim que "CAIU MUITO" saiu num
+  // perfume de R$ 10,90.
+  if (s.mode === 'history' && s.discount >= 0.6) return 'ISSO É UM ABSURDO 🔥';
+  if (s.mode === 'history' && s.discount >= 0.45) return 'CAIU MUITO 🔥';
   if (s.offer.rating && s.offer.rating >= 4.8) return 'NOTA QUASE PERFEITA ⭐';
   return 'ACHADO DO DIA 🔥';
 }
@@ -64,7 +71,11 @@ export function formatDeal(s: Scored, link: string): string {
 
   lines.push(`*${hook(s)}*`);
   lines.push('');
-  lines.push(o.title);
+  lines.push(tituloHonesto(o.title, s.produto));
+  // O que a pessoa recebe, antes do preço: barato e explicado passa confiança,
+  // barato e calado parece golpe.
+  const rotulo = rotuloProduto(s.produto);
+  if (rotulo) lines.push(`_${rotulo}_`);
   lines.push('');
 
   // Formato "de/por": é o que o nicho usa e o que faz a oferta parecer oferta.

@@ -194,6 +194,15 @@ async function send(): Promise<void> {
       avisoDeAlta(r.subiu).forEach((l) => out.linha(l));
       out.linha('   Rode "npm run deals" de novo pra refazer a lista.');
     }
+
+    // A releitura pontua de novo, mas nada tirava do envio o que deixou de
+    // passar — promoção que acabou saía com "A LOJA DIZ 48%. O REAL É 7%".
+    const caiu = candidatos.filter((s) => s.rejected);
+    if (caiu.length) {
+      out.linha(`\n⚠️  ${caiu.length} do lote não passam mais nos filtros e ficaram de fora:`);
+      caiu.forEach((s) => out.linha(`   ${s.offer.title.slice(0, 46)} — ${s.rejected}`));
+      candidatos = candidatos.filter((s) => !s.rejected);
+    }
   }
 
   const picked = await grupo.naoRepetidas(candidatos);

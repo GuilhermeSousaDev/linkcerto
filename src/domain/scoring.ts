@@ -1,6 +1,7 @@
 import { config } from '../infra/config.js';
 import { historyFor, type Snapshot } from '../infra/db.js';
 import type { Offer } from '../infra/shopee.js';
+import { analisarProduto, precoIncompativel, type Produto } from './produto.js';
 
 /**
  * Two modes, chosen automatically per product:
@@ -24,6 +25,13 @@ export interface Scored {
   discount: number;
   baseline: number | null;
   isLowest: boolean;
+  /**
+   * Passou pela nota/vendas ou pelo menor preço, não pelo desconto. A mensagem
+   * não mostra "de/por" nesse caso: anunciar 5% como promoção queima o grupo.
+   */
+  semDesconto: boolean;
+  /** O que o título diz que o produto é. Ver `produto.ts`. */
+  produto: Produto;
   /** null = eligible; otherwise why it was dropped. */
   rejected: string | null;
 }
@@ -48,6 +56,7 @@ function spanDays(snaps: Snapshot[]): number {
 }
 
 export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
+  const produto = analisarProduto(offer.title, offer.price);
   const base = (rejected: string | null, extra: Partial<Scored> = {}): Scored => ({
     offer,
     score: 0,
@@ -55,6 +64,8 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
     discount: 0,
     baseline: null,
     isLowest: false,
+    semDesconto: false,
+    produto,
     rejected,
     ...extra,
   });
@@ -62,6 +73,10 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
   // ── Quality gates, same in both modes ──
   if (offer.rating !== null && offer.rating < config.MIN_RATING) return base('rating_baixo');
   if (offer.sold !== null && offer.sold < config.MIN_SALES) return base('poucas_vendas');
+  // Preço real, produto diferente do que o título vende: é o que faz o grupo
+  // parar de confiar. Vem antes do desconto porque nenhum desconto conserta.
+  const incompativel = precoIncompativel(produto, offer.price);
+  if (incompativel) return base(incompativel);
 
   // ── Pick a mode ──
   const prior = snaps.slice(0, -1).map((s) => s.price); // exclude the current reading
@@ -81,12 +96,23 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
     isLowest = prior.every((p) => p >= offer.price);
   } else {
     mode = 'instant';
-    if (offer.vendorDiscount === null) return base('sem_desconto', { mode });
-    discount = offer.vendorDiscount;
+    discount = offer.vendorDiscount ?? 0;
   }
 
   if (discount > config.MAX_DISCOUNT) return base('desconto_implausivel', { mode, discount });
-  if (discount < config.MIN_DISCOUNT) return base('desconto_pequeno', { mode, discount, baseline });
+
+  // Desconto pequeno não é o fim: produto que todo mundo compra e aprova, ou
+  // no menor preço que já medimos, é bom achado mesmo sem "de/por". Só não
+  // passa quem está MAIS CARO que o normal — aí não é achado, é preço cheio.
+  const consagrado =
+    (offer.rating ?? 0) >= config.TOP_RATING && (offer.sold ?? 0) >= config.TOP_SALES;
+  const semDesconto = discount < config.MIN_DISCOUNT;
+  if (semDesconto && (discount < 0 || !(consagrado || isLowest))) {
+    return base(
+      mode === 'instant' && offer.vendorDiscount === null ? 'sem_desconto' : 'desconto_pequeno',
+      { mode, discount, baseline },
+    );
+  }
 
   // ── Score 0-100 ──
   // Depth dominates. Commission is capped low on purpose: rank by payout and
@@ -114,6 +140,8 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
     discount,
     baseline,
     isLowest,
+    semDesconto,
+    produto,
     rejected: null,
   };
 }
