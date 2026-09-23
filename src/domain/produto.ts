@@ -36,6 +36,30 @@ export interface Produto {
 const PISO_ML: Record<Faixa, number> = { grife: 2.5, arabe: 0.7, popular: 0.3 };
 
 /**
+ * Piso de R$/ml pra quem NÃO teve marca reconhecida.
+ *
+ * O piso por faixa só dispara quando o título casa com a lista de marcas, então
+ * "Kit 2 Perfumes Ferrari 100ml" por R$ 34 (R$ 0,17/ml) passava batido: Ferrari
+ * não está na lista, `faixa` fica null e a checagem inteira era pulada. Na
+ * prática quase tudo que a busca traz é sem marca — o piso que mais importava
+ * era justamente o único que não existia.
+ *
+ * R$ 0,60/ml fica abaixo do árabe de entrada e ainda deixa contratipo honesto
+ * passar (100ml por R$ 60). Abaixo disso não é perfume importado, é água
+ * perfumada envasada: o título promete uma coisa e o frasco entrega outra.
+ */
+const PISO_ML_GENERICO = 0.6;
+
+/**
+ * Tipos que se vendem COMO perfume e por isso respondem pelo piso genérico.
+ *
+ * Body splash, refil e amostra ficam de fora porque custar pouco por ml é a
+ * natureza deles, não sinal de fraude. Quem cuida desses é `PESO_TIPO`, que
+ * empurra pro fim da lista em vez de descartar.
+ */
+const COBRADOS_PELO_PISO: Tipo[] = ['original', 'sem_marca', 'inspirado'];
+
+/**
  * Sem volume no título e abaixo disto, não dá pra dizer o que a pessoa recebe.
  * Perfume sem marca por menos de R$ 60 é quase sempre frasco pequeno ou refil.
  */
@@ -173,9 +197,31 @@ export function precoIncompativel(p: Produto, preco: number): string | null {
     }
   }
 
+  // Sem marca reconhecida o piso por faixa nunca roda — este é o que sobra.
+  if (!p.faixa && COBRADOS_PELO_PISO.includes(p.tipo) && p.precoMl !== null) {
+    if (p.precoMl < PISO_ML_GENERICO) return 'barato_demais_pra_ser_perfume';
+  }
+
   if (p.ml === null && preco < PISO_SEM_TAMANHO) return 'tamanho_desconhecido';
   return null;
 }
+
+/**
+ * Quanto do score o produto mantém, pelo que ele de fato é.
+ *
+ * O tipo era só um emoji no rótulo: body splash, refil e contratipo competiam
+ * de igual pra igual com perfume — e ganhavam, porque o desconto anunciado
+ * neles é sempre maior. Aqui o ranking passa a preferir o produto de verdade
+ * quando os números são parecidos, sem sumir com o resto da lista.
+ */
+export const PESO_TIPO: Record<Tipo, number> = {
+  original: 1,
+  sem_marca: 0.75,
+  inspirado: 0.6,
+  refil: 0.5,
+  body_splash: 0.5,
+  amostra: 0.4,
+};
 
 const ROTULO: Record<Tipo, string> = {
   original: '🏷️ Marca',

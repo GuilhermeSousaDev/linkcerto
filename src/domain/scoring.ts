@@ -1,7 +1,7 @@
 import { config } from '../infra/config.js';
 import { historyFor, type Snapshot } from '../infra/db.js';
 import type { Offer } from '../infra/shopee.js';
-import { analisarProduto, precoIncompativel, type Produto } from './produto.js';
+import { analisarProduto, precoIncompativel, PESO_TIPO, type Produto } from './produto.js';
 
 /**
  * Two modes, chosen automatically per product:
@@ -115,11 +115,17 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
   }
 
   // ── Score 0-100 ──
-  // Depth dominates. Commission is capped low on purpose: rank by payout and
-  // the group becomes spam.
+  // Com baseline medido o desconto manda, porque é nosso e ninguém falsifica.
+  //
+  // Sem baseline, o desconto é o `de/por` do próprio vendedor — e ele escolhe
+  // esse número. Dar 50 pontos pra isso fazia o ranking ordenar por quem mais
+  // inflou a âncora: a lista vinha liderada por -62%, -60%, -58% em produto de
+  // R$ 0,10/ml. No modo instant quem manda é a prova social, que depende de
+  // gente comprando de verdade. Comissão segue capada de propósito: rankear por
+  // pagamento vira spam.
   const w = hasBaseline
     ? { discount: 45, social: 25, commission: 20, lowest: 10 }
-    : { discount: 50, social: 28, commission: 22, lowest: 0 };
+    : { discount: 20, social: 55, commission: 25, lowest: 0 };
 
   const nDiscount = clamp01(discount / 0.5); // 50% off = full marks
   // Rating alone is cheap to fake; weight it by how many people actually bought.
@@ -127,11 +133,14 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
   const nSocial = clamp01(((offer.rating ?? 0) / 5) * confidence);
   const nCommission = clamp01(((offer.commissionRate ?? 0) * offer.price) / 50); // R$50 = full
 
-  const score =
+  const bruto =
     w.discount * nDiscount +
     w.social * nSocial +
     w.commission * nCommission +
     w.lowest * (isLowest ? 1 : 0);
+
+  // O que o produto É entra no ranking, não só no rótulo. Ver `PESO_TIPO`.
+  const score = bruto * (produto.categoria ? PESO_TIPO[produto.tipo] : 1);
 
   return {
     offer,
