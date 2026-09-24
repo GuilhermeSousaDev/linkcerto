@@ -10,6 +10,7 @@ import {
 } from '../infra/db.js';
 import { affiliateLink, fetchByIds, fetchOffers } from '../infra/shopee.js';
 import { findNiche, keywords } from '../domain/niches.js';
+import { aplicarGenero, rotuloGenero, type Genero } from '../domain/genero.js';
 import { rank, type Scored } from '../domain/scoring.js';
 import { aiEnabled, filtrarPublico, searchTerms, type ForaDoPublico } from '../ai/index.js';
 
@@ -25,6 +26,13 @@ export interface PedidoDeBusca {
   manual?: string;
   /** `--tema`: vira busca se for categoria; se for ângulo, não mexe. */
   tema?: string;
+  /**
+   * `--female`: o gênero desta rodada, quando ele não é o do perfil.
+   *
+   * Recorta o tema, não substitui ele: "--tema perfume --female" busca perfume
+   * feminino. Não mexe no `--keywords`, que é literal por definição.
+   */
+  genero?: Genero;
   /** Só pra montar a mensagem de erro com o comando que a pessoa digitou. */
   comando: string;
 }
@@ -54,6 +62,21 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
 
   if (p.manual) return { termos: keywords(p.manual), avisos };
 
+  /**
+   * Último passo de todo caminho que NÃO é `--keywords`.
+   *
+   * Existir num lugar só é o que garante que nenhum dos returns daqui escape
+   * do `--female` em silêncio — o da IA, o do catálogo e o do `SHOPEE_KEYWORDS`
+   * passam todos por aqui. No caminho da IA é redundante de propósito: ela já
+   * recebeu o gênero, isto é a rede pra quando ela ignora.
+   */
+  const entregar = (termos: string[]): Termos => {
+    if (!p.genero) return { termos, avisos };
+    const ajustados = aplicarGenero(termos, p.genero);
+    avisos.push(`\n👥 Gênero desta rodada: ${rotuloGenero[p.genero]}`);
+    return { termos: ajustados, avisos };
+  };
+
   if (!base.length && !p.tema) {
     throw new Error(
       'Sem termos de busca. Diga o assunto:\n' +
@@ -63,7 +86,7 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
     );
   }
 
-  if (!p.tema) return { termos: base, avisos };
+  if (!p.tema) return entregar(base);
 
   // Sem keywords fixas, AI_PUBLICO é a única coisa que diz pra quem o perfil
   // fala — vazio, "academia" volta com legging feminina.
@@ -80,23 +103,24 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
     const achado = findNiche(p.tema);
     if (achado) {
       avisos.push(`\n📚 IA desligada — tema "${p.tema}" caiu no nicho "${achado.nome}"`);
-      return { termos: achado.niche.keywords, avisos };
+      return entregar(achado.niche.keywords);
     }
-    return { termos: base, avisos };
+    return entregar(base);
   }
 
   let daIA: string[] = [];
   try {
-    daIA = await searchTerms(p.tema, base);
+    daIA = await searchTerms(p.tema, base, p.genero);
   } catch (err) {
     avisos.push(`⚠️  Não consegui converter o tema em busca (${(err as Error).message}).`);
     const achado = findNiche(p.tema);
-    if (achado) return { termos: achado.niche.keywords, avisos };
+    if (achado) return entregar(achado.niche.keywords);
   }
 
   if (daIA.length) {
-    avisos.push(`\n💡 Tema "${p.tema}" virou busca: ${daIA.join(', ')}`);
-    return { termos: daIA, avisos };
+    const r = entregar(daIA);
+    avisos.push(`\n💡 Tema "${p.tema}" virou busca: ${r.termos.join(', ')}`);
+    return r;
   }
 
   // Ângulo editorial não diz o que buscar. Com nicho fixo é ótimo — só a copy
@@ -112,7 +136,7 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
   }
 
   avisos.push(`\n💡 "${p.tema}" é ângulo, não categoria — a busca continua a de sempre.`);
-  return { termos: base, avisos };
+  return entregar(base);
 }
 
 /**
@@ -260,9 +284,13 @@ export interface CorteDePublico {
 }
 
 /** Descarta o que é de outro público. Ver `ai/publico.ts`. */
-export async function porPublico(list: Scored[], ignorar: boolean): Promise<CorteDePublico> {
+export async function porPublico(
+  list: Scored[],
+  ignorar: boolean,
+  genero?: Genero,
+): Promise<CorteDePublico> {
   if (ignorar) return { dentro: list, fora: [] };
-  return filtrarPublico(list);
+  return filtrarPublico(list, genero);
 }
 
 /**

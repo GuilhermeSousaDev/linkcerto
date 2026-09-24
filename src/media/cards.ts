@@ -711,6 +711,28 @@ async function renderCapaComRetrato(
 }
 
 /**
+ * A capa, com retrato ou sem. `fundo` é a foto do produto que vira o fundo
+ * desfocado quando não tem retrato. Exportada pro `photos:capa`, que refaz só
+ * este slide sem mexer no resto do post.
+ */
+export async function renderCapa(
+  capa: PostPlan['capa'],
+  retrato: string | null,
+  fundo: string,
+  out: string,
+): Promise<void> {
+  if (retrato) {
+    await renderCapaComRetrato(retrato, capa, out);
+    return;
+  }
+  const coverBg = await sharp(fundo).resize(S, S, { fit: 'cover' }).blur(24).toBuffer();
+  await sharp(coverBg)
+    .composite([{ input: Buffer.from(coverSvg(capa)), top: 0, left: 0 }])
+    .jpeg({ quality: 94, mozjpeg: true })
+    .toFile(out);
+}
+
+/**
  * Último slide, só o pedido.
  *
  * Separado dos cards de propósito: CTA repetido em toda foto vira moldura e o
@@ -861,16 +883,7 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
 
     const capaPath = resolve(outDir, '01-CAPA.jpg');
     const retrato = plan.capa.casting ? pegarFoto(plan.capa.casting) : null;
-
-    if (retrato) {
-      await renderCapaComRetrato(retrato, plan.capa, capaPath);
-    } else {
-      const coverBg = await sharp(src).resize(S, S, { fit: 'cover' }).blur(24).toBuffer();
-      await sharp(coverBg)
-        .composite([{ input: Buffer.from(coverSvg(plan.capa)), top: 0, left: 0 }])
-        .jpeg({ quality: 94, mozjpeg: true })
-        .toFile(capaPath);
-    }
+    await renderCapa(plan.capa, retrato, src, capaPath);
 
     const ctaPath = resolve(outDir, `${String(ctaRank).padStart(2, '0')}-CTA.jpg`);
     const ctaBg = await sharp(src).resize(S, S, { fit: 'cover' }).blur(30).toBuffer();

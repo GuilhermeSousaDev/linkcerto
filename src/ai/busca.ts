@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { config } from '../infra/config.js';
+import { rotuloGenero, type Genero } from '../domain/genero.js';
 import { aiEnabled, askJson } from './client.js';
 
 const termosSchema = z.object({
@@ -26,8 +27,23 @@ const termosSchema = z.object({
  * nenhum deles é de roupa: exemplo de saída solto o modelo copia, exemplo que
  * mostra a relação ele aplica.
  */
-export async function searchTerms(tema: string, atuais: string[]): Promise<string[]> {
+export async function searchTerms(
+  tema: string,
+  atuais: string[],
+  genero?: Genero,
+): Promise<string[]> {
   if (!aiEnabled()) return [];
+
+  // Pedido explícito (`--female`) ganha do público do perfil. Sem isso, o
+  // modelo lê AI_PUBLICO="homem 20-35" e devolve termo masculino de novo —
+  // a flag não teria efeito nenhum no lugar onde ela mais precisa funcionar.
+  const pedidoDeGenero = genero
+    ? `\n\nGÊNERO OBRIGATÓRIO NESTA RODADA: ${rotuloGenero[genero]}.
+Esta linha ganha do PÚBLICO DO PERFIL e dos TERMOS DE HOJE. Se a categoria tem
+gênero, TODO termo tem que sair ${rotuloGenero[genero]}. Se ela não tem
+(eletrônico, casa, cozinha, pet), os termos ficam neutros — não grude a palavra
+"${rotuloGenero[genero]}" num produto que não tem versão por gênero.`
+    : '';
 
   const raw = await askJson(
     termosSchema,
@@ -41,7 +57,7 @@ Responda SOMENTE com JSON válido.`,
         role: 'user',
         content: `TEMA PEDIDO: ${tema}
 PÚBLICO DO PERFIL: ${config.AI_PUBLICO || 'não informado'}
-TERMOS QUE O PERFIL USA HOJE: ${atuais.join(', ') || 'nenhum'}
+TERMOS QUE O PERFIL USA HOJE: ${atuais.join(', ') || 'nenhum'}${pedidoDeGenero}
 
 O tema nomeia uma CATEGORIA de produto (academia, perfume, cozinha, frio,
 praia, pet) ou é só um ÂNGULO editorial (achados que parecem caros, presente de

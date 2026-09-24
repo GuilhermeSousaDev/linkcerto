@@ -4,6 +4,7 @@ import { logger } from './infra/logger.js';
 import { close, stats } from './infra/db.js';
 import { WhatsApp } from './infra/whatsapp.js';
 import { listNiches } from './domain/niches.js';
+import type { Genero } from './domain/genero.js';
 import { baixarDoPexels, castings, fotosDe, listarCapas, preparar } from './media/capas.js';
 import { folhaDeProvas } from './media/cards.js';
 import { avisoDeAlta, loteToJson } from './domain/lote.js';
@@ -56,6 +57,8 @@ Alerta de Preços
            --all         Mostra também os descartados e o motivo
            --dias N      Dias sem repetir um produto (padrão: ${config.POST_COOLDOWN_DAYS})
            --repetir     Ignora essa janela
+           --female      Busca a versão feminina do tema (ignora o gênero do
+                         AI_PUBLICO nesta rodada; não afeta --keywords)
            --sem-filtro  Não descarta produto de outro público (AI_PUBLICO)
            --db          No deals/ideia: escolhe do banco, sem buscar na Shopee
            --dias-db N   Idade máxima da leitura no --db (padrão: ${config.DB_MAX_AGE_DAYS})
@@ -64,9 +67,18 @@ Alerta de Preços
            --lote F      Usa um lote salvo específico (data/lotes/….json)
 `;
 
+/**
+ * O gênero desta rodada, quando ele não é o do perfil.
+ *
+ * Só recorta o tema — não é um tema em si. `--female` sozinho, sem `--tema`
+ * nem `SHOPEE_KEYWORDS`, cai no mesmo erro de "sem termos de busca" de sempre.
+ */
+const generoPedido = (): Genero | undefined => (flag('female') ? 'f' : undefined);
+
 const pedidoDeBusca = () => ({
   manual: texto('keywords'),
   tema: frase('tema'),
+  genero: generoPedido(),
   comando,
 });
 
@@ -108,7 +120,13 @@ async function selecionar(opts: { comFoto?: boolean } = {}) {
   }
 
   const aprovadas = ofertas.aprovadas(scored, opts.comFoto);
-  const { dentro, fora } = await ofertas.porPublico(aprovadas, flag('sem-filtro'));
+  // O gênero vai junto: o `--female` acha produto feminino e este filtro, que
+  // lê o AI_PUBLICO, cortaria todos eles logo em seguida.
+  const { dentro, fora } = await ofertas.porPublico(
+    aprovadas,
+    flag('sem-filtro'),
+    generoPedido(),
+  );
   out.foraDoPublico(fora, config.AI_PUBLICO);
 
   return { termos, scored, elegiveis: dentro };
