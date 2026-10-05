@@ -73,11 +73,6 @@ const NICHES: Record<string, Niche> = {
     descricao: 'Pet shop',
     comissao: 'média (10-15%)',
   },
-  infantil: {
-    keywords: ['roupa infantil', 'brinquedo educativo', 'kit bebe', 'tenis infantil'],
-    descricao: 'Infantil e bebê',
-    comissao: 'média (10-16%)',
-  },
   eletronicos: {
     keywords: ['fone bluetooth', 'carregador rapido', 'caixa de som', 'mouse gamer'],
     descricao: 'Eletrônicos e acessórios',

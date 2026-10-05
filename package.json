@@ -14,6 +14,7 @@
     "send": "tsx src/cli.ts send",
     "ideia": "tsx src/cli.ts ideia",
     "photos": "tsx src/cli.ts photos",
+    "photos:capa": "tsx src/cli.ts photos:capa",
     "photos:send": "tsx src/cli.ts photos:send",
     "niches": "tsx src/cli.ts niches",
     "capas": "tsx src/cli.ts capas",
@@ -21,6 +22,7 @@
     "capas:fetch": "tsx src/cli.ts capas:fetch",
     "capas:check": "tsx src/cli.ts capas:check",
     "stats": "tsx src/cli.ts stats",
+    "db:limpar": "tsx src/cli.ts db:limpar",
     "wa:login": "tsx src/cli.ts wa:login",
     "wa:groups": "tsx src/cli.ts wa:groups",
     "typecheck": "tsc --noEmit"

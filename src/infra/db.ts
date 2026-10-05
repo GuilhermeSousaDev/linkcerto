@@ -266,6 +266,70 @@ export async function jaConhecidos(ids: string[]): Promise<Set<string>> {
   return new Set(rows.map((r) => r.id));
 }
 
+export interface CandidatoLimpeza {
+  id: string;
+  title: string;
+  leituras: number;
+  lastSeenAt: Date;
+}
+
+/**
+ * Ofertas que PODEM ser apagadas: as que nunca foram pro grupo nem viraram post.
+ *
+ * O que foi usado fica fora daqui na query, não num filtro depois — é o que
+ * garante que a limpeza nunca apaga histórico de produto que já saiu.
+ */
+export async function candidatosLimpeza(): Promise<CandidatoLimpeza[]> {
+  const { rows } = await query<{ id: string; title: string; leituras: string; last_seen_at: Date }>(
+    `SELECT o.id, o.title, o.last_seen_at,
+            (SELECT COUNT(*) FROM price_snapshot ps WHERE ps.offer_id = o.id) AS leituras
+       FROM offer o
+      WHERE NOT EXISTS (SELECT 1 FROM sent s WHERE s.offer_id = o.id)
+        AND NOT EXISTS (SELECT 1 FROM posted p WHERE p.offer_id = o.id)`,
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    leituras: Number(r.leituras),
+    lastSeenAt: r.last_seen_at,
+  }));
+}
+
+/** Apaga as ofertas e todas as leituras delas, numa transação só. */
+export async function apagarOfertas(ids: string[]): Promise<{ ofertas: number; leituras: number }> {
+  if (!ids.length) return { ofertas: 0, leituras: 0 };
+
+  const p = db();
+  await pronto;
+  const client = await p.connect();
+  try {
+    await client.query('BEGIN');
+    const snaps = await client.query('DELETE FROM price_snapshot WHERE offer_id = ANY($1)', [ids]);
+    const offers = await client.query(
+      // Trava de novo aqui: entre listar e apagar o `send` pode ter rodado.
+      `DELETE FROM offer o WHERE o.id = ANY($1)
+          AND NOT EXISTS (SELECT 1 FROM sent s WHERE s.offer_id = o.id)
+          AND NOT EXISTS (SELECT 1 FROM posted p WHERE p.offer_id = o.id)`,
+      [ids],
+    );
+    if (offers.rowCount !== ids.length) {
+      throw new Error('alguma oferta virou usada durante a limpeza — nada foi apagado, rode de novo');
+    }
+    await client.query('COMMIT');
+    return { ofertas: offers.rowCount ?? 0, leituras: snaps.rowCount ?? 0 };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+/** Devolve ao disco o espaço das linhas apagadas. Fora de transação, por exigência do Postgres. */
+export async function compactar(): Promise<void> {
+  await query('VACUUM (ANALYZE) price_snapshot, offer');
+}
+
 /**
  * As ofertas que já estão no banco, com a última leitura de preço de cada uma.
  *

@@ -1,6 +1,6 @@
 /** Palavra que não pode terminar uma frase — sobra de corte, lê como erro. */
 const DANGLING =
-  /[\s,;:+\-–—]+(e|ou|de|do|da|dos|das|com|sem|sobre|por|pelos?|pra|para|que|em|no|na|nos|nas|ao|aos|à|às|um|uma|uns|umas|a|o|os|as|é|só|mais|meu|sua?|seus?)$/i;
+  /[\s,;:+\-–—]+(e|ou|de|do|da|dos|das|com|sem|sobre|por|pelos?|pra|para|que|em|no|na|nos|nas|ao|aos|à|às|um|uma|uns|umas|a|o|os|as|é|só|mais|meu|sua?|seus?|teu|tua|te|me|se|lhe|vai|vou|vão|tá|pode|quer|qual|quais|quem|como|onde)$/i;
 
 /**
  * Corta um texto no limite, sem deixar frase pela metade.

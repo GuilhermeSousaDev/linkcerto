@@ -2,6 +2,7 @@ import { config } from '../infra/config.js';
 import { historyFor, type Snapshot } from '../infra/db.js';
 import type { Offer } from '../infra/shopee.js';
 import { analisarProduto, precoIncompativel, PESO_TIPO, type Produto } from './produto.js';
+import { ehInfantil } from './infantil.js';
 
 /**
  * Two modes, chosen automatically per product:
@@ -71,6 +72,8 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
   });
 
   // ── Quality gates, same in both modes ──
+  // Primeiro de todos: produto de criança não entra nem com nota perfeita.
+  if (ehInfantil(offer.title)) return base('infantil');
   if (offer.rating !== null && offer.rating < config.MIN_RATING) return base('rating_baixo');
   if (offer.sold !== null && offer.sold < config.MIN_SALES) return base('poucas_vendas');
   // Preço real, produto diferente do que o título vende: é o que faz o grupo

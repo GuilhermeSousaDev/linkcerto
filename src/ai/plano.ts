@@ -98,6 +98,16 @@ function semMentira(text: string, campo: string): string {
   return '';
 }
 
+/**
+ * Manchete da capa inteira: se a IA insistiu numa longa demais, uma variante
+ * que cabe ganha de cortar a principal no meio.
+ */
+function manchete(titulo: string, variantes: string[]): string {
+  const cabe = (t: string) => t.replace(/\s+/g, ' ').trim().length <= LIMITS.titulo;
+  if (cabe(titulo)) return titulo.trim();
+  return variantes.find((v) => v && cabe(v))?.trim() ?? clip(titulo, LIMITS.titulo);
+}
+
 const norm = (s: string) =>
   s
     .normalize('NFD')
@@ -205,6 +215,18 @@ Regras que valem pra cada linha que você escrever:
 6. Não prometa o que o grupo não faz. O grupo é grátis, aberto e não tem vaga
    limitada, prazo pra fechar nem cupom exclusivo. Escassez inventada é a
    forma mais rápida de perder quem entrou.
+7. Toda frase tem que fazer sentido SOZINHA e soar como algo que um brasileiro
+   realmente fala. Frase curta não é frase pela metade: nada de verbo sem
+   complemento nem tradução ao pé da letra do inglês ("fits", "that works",
+   "upgrade"). Teste: se um amigo ouvisse, ele perguntaria "cabe o quê?"?
+   Então reescreva.
+   Ruim → bom:
+   - "O look que cabe" → "Look completo gastando pouco"
+   - "Estilo que entrega" → "Parece caro, mas é barato"
+   - "O relógio que fala" → "Relógio que parece de rico"
+   - "Upgrade no guarda-roupa" → "Renovei o guarda-roupa gastando pouco"
+   Use as expressões do dia a dia: "baratinho", "preço de banana", "parece
+   caro", "achei", "vale cada centavo", "custo-benefício".
 
 Responda SOMENTE com JSON válido, sem nenhum texto em volta.`;
 
@@ -283,9 +305,9 @@ a escrever uma linha que não cabe.
   ],`
   }
   "cta": {
-    "headline": "pergunta do último slide, até ${LIMITS.ctaHeadline}",
-    "linha1": "o que tem no grupo, até ${LIMITS.ctaLinha}",
-    "linha2": "por que entrar agora, até ${LIMITS.ctaLinha}"
+    "headline": "pergunta COMPLETA do último slide, até ${LIMITS.ctaHeadline} — ex.: 'Qual você levaria pra casa?'",
+    "linha1": "o que tem no grupo, frase completa, até ${LIMITS.ctaLinha} — ex.: 'No grupo tem mais suéter barato'",
+    "linha2": "o que ela ganha entrando, frase completa, até ${LIMITS.ctaLinha} — ex.: 'Todo dia cai achado novo lá'"
   },
   "legenda": "2 a 3 linhas, terminando numa pergunta que dê vontade de comentar. Sem hashtags e sem link aqui.",
   "hashtags": ["6 a 8 hashtags, misturando grandes e de nicho"],
@@ -383,6 +405,45 @@ export async function postPlan(
 
   let raw = await askJson(schema, mensagens, teto);
 
+  // Texto de imagem acima do limite seria cortado pelo `clip`, e corte sempre
+  // deixa frase pela metade ("Qual código vai te", "parece de grife, preço").
+  // Pedir pra reescrever mais curto sai melhor que qualquer corte.
+  const longos = () =>
+    [
+      { campo: 'capa.titulo', texto: raw.capa.titulo, max: LIMITS.titulo },
+      { campo: 'capa.subtitulo', texto: raw.capa.subtitulo, max: LIMITS.subtitulo },
+      { campo: 'cta.headline', texto: raw.cta.headline, max: LIMITS.ctaHeadline },
+      { campo: 'cta.linha1', texto: raw.cta.linha1, max: LIMITS.ctaLinha },
+      { campo: 'cta.linha2', texto: raw.cta.linha2, max: LIMITS.ctaLinha },
+      ...raw.slides.map((s) => ({
+        campo: `etiqueta ${s.indice}`,
+        texto: s.etiqueta,
+        max: LIMITS.etiqueta,
+      })),
+    ].filter((c) => c.texto.replace(/\s+/g, ' ').trim().length > c.max);
+
+  const estourados = longos();
+  if (estourados.length) {
+    log.warn(`texto longo demais pra imagem, pedindo reescrita: ${estourados.map((c) => c.campo).join(', ')}`);
+    raw = await askJson(
+      schema,
+      [
+        ...mensagens,
+        {
+          role: 'user' as const,
+          content:
+            'Estes textos não cabem na imagem e seriam cortados no meio da frase:\n' +
+            estourados
+              .map((c) => `- ${c.campo}: "${c.texto}" (${c.texto.length} caracteres, máximo ${c.max})`)
+              .join('\n') +
+            '\nReescreva cada um como uma frase COMPLETA e mais curta, dentro do máximo — ' +
+            'não corte, reescreva. Devolva o JSON inteiro de novo.',
+        },
+      ],
+      teto,
+    );
+  }
+
   // Capa e slide final valem pra lista inteira: se prometem "menos de 100" e
   // existe item de R$ 139, o post inteiro nasce mentindo — e isso vai impresso
   // na capa. Uma correção dirigida acerta mais que insistir na mesma pergunta.
@@ -453,7 +514,7 @@ export async function postPlan(
     termos,
     angulo: raw.angulo.trim(),
     capa: {
-      titulo: clip(raw.capa.titulo, LIMITS.titulo),
+      titulo: manchete(raw.capa.titulo, raw.capa.variantes),
       subtitulo: clip(raw.capa.subtitulo, LIMITS.subtitulo),
       variantes: raw.capa.variantes.map((v) => clip(v, LIMITS.titulo)).filter(Boolean),
       // Resolvido aqui, e não na hora de renderizar: o plano salvo é feito pra
@@ -546,6 +607,17 @@ export function planResumo(raw: string): {
     ids: parsed.data.slides.map((s) => s.id).filter(Boolean),
     termos: parsed.data.termos,
     grade: parsed.data.grade,
+  };
+}
+
+/** Só a capa de um plano salvo — o `photos:capa` não precisa dos produtos. */
+export function capaSalva(raw: string): PostPlan['capa'] {
+  const { capa } = savedSchema.parse(JSON.parse(raw));
+  return {
+    titulo: clip(capa.titulo, LIMITS.titulo),
+    subtitulo: clip(capa.subtitulo, LIMITS.subtitulo),
+    variantes: capa.variantes.map((v) => clip(v, LIMITS.titulo)).filter(Boolean),
+    casting: resolverCasting(capa.casting),
   };
 }
 

@@ -1,10 +1,14 @@
-import { writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { config } from '../infra/config.js';
 import { markPosted } from '../infra/db.js';
 import type { Scored } from '../domain/scoring.js';
-import { loadPlan, planResumo, planToJson, postPlan, type PostPlan } from '../ai/index.js';
+import { capaSalva, loadPlan, planResumo, planToJson, postPlan, type PostPlan } from '../ai/index.js';
 import { scoreMany, type ImageScore } from '../media/imagescore.js';
-import { makePhotos, type PhotoOut } from '../media/cards.js';
+import { makePhotos, renderCapa, type PhotoOut } from '../media/cards.js';
+import { pegarFoto, resolverCasting } from '../media/capas.js';
+import { LIMITS } from '../ai/limites.js';
+import { clip } from '../util/texto.js';
 import { pastaDoDia, type Salvo } from '../util/arquivo.js';
 
 /** O post: plano da IA, escolha das fotos e geração dos cards. */
@@ -121,6 +125,70 @@ export async function gerarPost(plan: PostPlan): Promise<PostGerado> {
   await markPosted(plan.itens.map((it) => it.s.offer.id));
 
   return { dir, cards };
+}
+
+export interface CapaRefeita {
+  path: string;
+  capa: PostPlan['capa'];
+  /** O retrato usado; `null` quando caiu na foto do produto desfocada. */
+  retrato: string | null;
+}
+
+/**
+ * Refaz só o 01-CAPA.jpg de um post já gerado.
+ *
+ * Sem opção nenhuma, troca o retrato pelo próximo do rodízio — a foto que
+ * acabou de sair é a mais recente do `capas-uso.json`, então nunca volta a
+ * mesma. Os produtos, a legenda e os outros slides ficam intocados.
+ */
+export async function refazerCapa(
+  dir: string,
+  opts: { casting?: string; foto?: string; variante?: number; titulo?: string; subtitulo?: string },
+): Promise<CapaRefeita> {
+  const planoPath = join(dir, '00-PLANO.json');
+  if (!existsSync(planoPath)) {
+    throw new Error(`${planoPath} não existe — essa pasta não veio do "npm run photos".`);
+  }
+  const raw = readFileSync(planoPath, 'utf8');
+  const capa = capaSalva(raw);
+
+  if (opts.casting !== undefined) {
+    capa.casting = resolverCasting(opts.casting);
+    if (!capa.casting) throw new Error(`Casting "${opts.casting}" não existe ou está sem foto.`);
+  }
+
+  // A variante troca de lugar com o título: o que saiu continua na lista, e
+  // rodar de novo com o mesmo número desfaz.
+  if (opts.variante !== undefined) {
+    const i = opts.variante - 1;
+    const nova = capa.variantes[i];
+    if (!nova) throw new Error(`O plano só tem ${capa.variantes.length} variante(s) de capa.`);
+    capa.variantes[i] = capa.titulo;
+    capa.titulo = nova;
+  }
+
+  // Texto escrito à mão ganha de tudo, inclusive da variante.
+  if (opts.titulo) capa.titulo = clip(opts.titulo, LIMITS.titulo);
+  if (opts.subtitulo) capa.subtitulo = clip(opts.subtitulo, LIMITS.subtitulo);
+
+  if (opts.foto && !existsSync(opts.foto)) throw new Error(`Foto não encontrada: ${opts.foto}`);
+  const retrato = opts.foto ?? (capa.casting ? pegarFoto(capa.casting) : null);
+
+  // Sem retrato o fundo é o primeiro produto, como no `gerarPost`.
+  const origDir = join(dir, 'originais');
+  const primeiro = existsSync(origDir)
+    ? readdirSync(origDir).filter((f) => f.endsWith('.jpg')).sort()[0]
+    : undefined;
+  if (!retrato && !primeiro) throw new Error(`Sem retrato e sem foto de produto em ${origDir}.`);
+
+  const path = join(dir, '01-CAPA.jpg');
+  await renderCapa(capa, retrato, primeiro ? join(origDir, primeiro) : '', path);
+
+  // O plano acompanha a imagem: quem abrir o 00-PLANO.json depois vê a capa
+  // que realmente saiu.
+  writeFileSync(planoPath, JSON.stringify({ ...JSON.parse(raw), capa }, null, 2), 'utf8');
+
+  return { path, capa, retrato };
 }
 
 export const corteVisualPadrao = () => config.MIN_IMAGE_SCORE;

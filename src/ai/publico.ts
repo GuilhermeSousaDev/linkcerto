@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { config } from '../infra/config.js';
 import { logger } from '../infra/logger.js';
 import type { Scored } from '../domain/scoring.js';
-import { rotuloGenero, type Genero } from '../domain/genero.js';
+import { generoDoPublico, rotuloGenero, veredito, type Genero } from '../domain/genero.js';
 import { aiEnabled, askJson } from './client.js';
 
 const log = logger.child({ mod: 'publico' });
@@ -26,45 +26,6 @@ const TETO_FILTRO = 80;
 export interface ForaDoPublico {
   s: Scored;
   motivo: string;
-}
-
-/** Gênero do público, quando ele tem um. Só isso é decidível por regra. */
-function generoDoPublico(publico: string): Genero | null {
-  const p = publico.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  const m = /\b(homem|homens|masculin[oa]s?|rapaz|cara)\b/.test(p);
-  const f = /\b(mulher|mulheres|feminin[oa]s?|menina|garota)\b/.test(p);
-  if (m === f) return null; // os dois ou nenhum: não dá pra decidir por regra
-  return m ? 'm' : 'f';
-}
-
-const UNISSEX = /\b(unissex|unisex|homens?\s+e\s+mulher|masculino\s+e\s+feminino|feminino\s+e\s+masculino)\b/;
-const MARCA = {
-  m: /\b(masculin[oa]s?|homem|homens|menino)\b/,
-  f: /\b(feminin[oa]s?|mulher|mulheres|menina)\b/,
-};
-
-/**
- * Veredito por regra, quando o título é explícito.
- *
- * A IA sozinha errou nos dois sentidos no mesmo teste: deixou passar uma "…para
- * Academia Feminina" e derrubou uma "Calça Legging Masculina" achando que
- * legging é sempre feminino. Quando a palavra está escrita no título não há o
- * que interpretar — a regra decide e a IA não opina.
- *
- * `null` = não é explícito, deixa a IA julgar (cropped, suplex, corte).
- */
-function veredito(titulo: string, genero: Genero): 'dentro' | 'fora' | null {
-  const t = titulo.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  if (UNISSEX.test(t)) return 'dentro';
-
-  const oposto = genero === 'm' ? 'f' : 'm';
-  const temMeu = MARCA[genero].test(t);
-  const temOposto = MARCA[oposto].test(t);
-
-  if (temMeu && temOposto) return 'dentro'; // "masculina e feminina" = serve
-  if (temMeu) return 'dentro';
-  if (temOposto) return 'fora';
-  return null;
 }
 
 /**

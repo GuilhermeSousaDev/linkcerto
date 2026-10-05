@@ -12,6 +12,7 @@ import { planToJson } from './ai/index.js';
 import * as ofertas from './services/ofertas.js';
 import * as conteudo from './services/conteudo.js';
 import * as grupo from './services/grupo.js';
+import * as limpeza from './services/limpeza.js';
 import * as out from './cli/saida.js';
 import { comando, flag, frase, num, numeros, texto } from './util/args.js';
 import { idadeEmTexto, salvar, ultimoSalvo } from './util/arquivo.js';
@@ -38,6 +39,9 @@ Alerta de Preços
   npm run send        Manda pro grupo do WhatsApp o lote que o deals mostrou
   npm run ideia       A IA monta o post de hoje: capa, ordem, legenda, roteiro
   npm run photos      Gera os cards 1080x1080 com o plano da IA
+  npm run photos:capa Refaz só a capa do último post: próximo retrato do rodízio
+                      (--casting X, --foto arquivo, --variante N, --dir pasta,
+                       --titulo "…", --subtitulo "…")
   npm run photos:send Manda os cards pro seu grupo pessoal (ponte pro celular)
   npm run niches      Sugestões de termos por nicho, com a comissão típica
   npm run capas       Os retratos de capa que você tem, por casting
@@ -47,6 +51,9 @@ Alerta de Preços
   npm run wa:login    Conecta o WhatsApp via QR code (uma vez só)
   npm run wa:groups   Lista seus grupos e os JIDs
   npm run stats       Quantos produtos/preços já foram coletados
+  npm run db:limpar   Mostra o que sairia do banco (infantil, outro gênero, fora
+                      do nicho, leitura única velha). --apply apaga de verdade.
+                      O que já foi pro grupo ou virou post nunca é apagado.
 
   Opções:  --tema "…"    O assunto. Se for categoria, muda a busca também
            --grade       Post de catálogo: 9 produtos por slide, com código
@@ -76,7 +83,7 @@ Alerta de Preços
 const generoPedido = (): Genero | undefined => (flag('female') ? 'f' : undefined);
 
 const pedidoDeBusca = () => ({
-  manual: texto('keywords'),
+  manual: frase('keywords'),
   tema: frase('tema'),
   genero: generoPedido(),
   comando,
@@ -146,8 +153,15 @@ async function novos(list: Awaited<ReturnType<typeof selecionar>>['elegiveis']) 
 async function deals(): Promise<void> {
   const { termos, scored, elegiveis } = await selecionar();
 
-  out.linha(`\n${elegiveis.length} ofertas passaram nos filtros (de ${scored.length})\n`);
-  const lista = elegiveis.slice(0, num('top', config.TOP_N));
+  // Mesma regra do `send`. Sem ela o lote enchia de produto que já foi pro
+  // grupo, e o `send` cortava em silêncio: 15 no lote, 3 enviados.
+  const ineditas = await grupo.naoRepetidas(elegiveis);
+  const jaEnviadas = elegiveis.length - ineditas.length;
+
+  out.linha(`\n${elegiveis.length} ofertas passaram nos filtros (de ${scored.length})`);
+  if (jaEnviadas) out.linha(`${jaEnviadas} já foram pro grupo e ficaram de fora`);
+  out.linha('');
+  const lista = ineditas.slice(0, num('top', config.TOP_N));
   lista.forEach((s, i) => out.oferta(s, i));
 
   // Só o que você viu vira histórico. Ver `services/ofertas.registrar`.
@@ -201,7 +215,10 @@ async function send(): Promise<void> {
     elegiveis = (await selecionar()).elegiveis;
   }
 
-  let candidatos = elegiveis.slice(0, num('top', config.TOP_N));
+  // Sem lote, corta os já enviados ANTES do top — senão eles ocupam as vagas.
+  let candidatos = lote
+    ? elegiveis
+    : (await grupo.naoRepetidas(elegiveis)).slice(0, num('top', config.TOP_N));
   if (lote) {
     const r = grupo.ofertasDoLote(lote, elegiveis);
     candidatos = r.picked;
@@ -224,6 +241,8 @@ async function send(): Promise<void> {
   }
 
   const picked = await grupo.naoRepetidas(candidatos);
+  const repetidas = candidatos.length - picked.length;
+  if (repetidas) out.linha(`\n${repetidas} já foram pro grupo (sem baixa de preço) e ficaram de fora`);
   if (!picked.length) {
     logger.info('nada novo pra enviar');
     return;
@@ -359,6 +378,30 @@ async function photos(): Promise<void> {
   out.linha('Foto ruim? Rode de novo com --skip 1,4 pra puxar as seguintes.\n');
 }
 
+async function photosCapa(): Promise<void> {
+  const dir = grupo.ultimaPastaDeCards(texto('dir'));
+  const variante = num('variante', 0);
+  const r = await conteudo.refazerCapa(dir, {
+    casting: texto('casting'),
+    foto: texto('foto'),
+    variante: variante > 0 ? variante : undefined,
+    titulo: frase('titulo'),
+    subtitulo: frase('subtitulo'),
+  });
+
+  out.linha(`\n🖼️  Capa refeita: ${r.path}`);
+  out.linha(`   título:    ${r.capa.titulo}`);
+  out.linha(`   subtítulo: ${r.capa.subtitulo}`);
+  out.linha(
+    `   retrato: ${r.retrato ? `${r.capa.casting} / ${r.retrato.split(/[\\/]/).pop()}` : '— (foto do produto)'}`,
+  );
+  if (r.capa.variantes.length) {
+    out.linha('\n   Outros títulos (--variante N):');
+    r.capa.variantes.forEach((v, i) => out.linha(`     ${i + 1}. ${v}`));
+  }
+  out.linha('\nNão gostou? Rode de novo: cada vez sai o próximo retrato do rodízio.\n');
+}
+
 async function photosSend(): Promise<void> {
   const jid = grupo.exigirGrupoPessoal();
   const dir = grupo.ultimaPastaDeCards(texto('dir'));
@@ -417,6 +460,7 @@ const COMANDOS: Record<string, () => Promise<void> | void> = {
   send,
   ideia,
   photos,
+  'photos:capa': photosCapa,
   'photos:send': photosSend,
   'wa:login': waLogin,
   'wa:groups': waGroups,
@@ -455,6 +499,26 @@ const COMANDOS: Record<string, () => Promise<void> | void> = {
     );
   },
   stats: async () => console.table(await stats()),
+  'db:limpar': async () => {
+    const plano = await limpeza.planejar();
+
+    const porMotivo = new Map<string, typeof plano.apagar>();
+    for (const a of plano.apagar) porMotivo.set(a.motivo, [...(porMotivo.get(a.motivo) ?? []), a]);
+
+    out.linha(`\n${plano.apagar.length} de ${plano.total} ofertas não usadas sairiam:\n`);
+    for (const [motivo, lista] of porMotivo) {
+      out.linha(`  ${motivo.padEnd(20)} ${String(lista.length).padStart(6)}`);
+      for (const a of lista.slice(0, 5)) out.linha(`      · ${a.c.title.slice(0, 80)}`);
+    }
+
+    if (!flag('apply')) {
+      out.linha('\nNada foi apagado. Rode com --apply pra apagar.\n');
+      return;
+    }
+    const r = await limpeza.aplicar(plano);
+    out.linha(`\n🧹 Apagadas ${r.ofertas} ofertas e ${r.leituras} leituras de preço.\n`);
+    console.table(await stats());
+  },
 };
 
 async function main(): Promise<void> {

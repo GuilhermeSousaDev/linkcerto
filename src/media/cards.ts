@@ -62,7 +62,17 @@ function cleanTitle(title: string): string {
  * que o preço estoure a largura do card.
  */
 function textWidth(text: string, size: number): number {
-  return text.length * size * 0.62;
+  // Maiúscula do Montserrat 800 é bem mais larga que a média: com 0.62 pra
+  // tudo, manchete em caixa alta vazava pela direita e o marca-texto da capa
+  // saía mais curto que o próprio texto. Medido na capa: ~0.72 por maiúscula.
+  let em = 0;
+  for (const c of text) {
+    if (c === 'M' || c === 'W') em += 0.95;
+    else if (c === 'I') em += 0.34;
+    else if (/\p{Lu}/u.test(c)) em += 0.72;
+    else em += 0.62;
+  }
+  return em * size;
 }
 
 function fitSize(text: string, ideal: number, maxWidth: number): number {
@@ -262,8 +272,13 @@ function coverSvg(capa: PostPlan['capa']): string {
   const maxW = S - 120;
   const title = cleanTitle(capa.titulo).toUpperCase();
   const subtitle = cleanTitle(capa.subtitulo);
-  const lines = wrap(title, 96, maxW, 3);
-  const size = Math.min(96, ...lines.map((l) => fitSize(l, 96, maxW)));
+  let ideal = 96;
+  let lines = wrap(title, ideal, maxW, 3);
+  while (ideal > 56 && lines.at(-1)?.endsWith('…')) {
+    ideal -= 6;
+    lines = wrap(title, ideal, maxW, 3);
+  }
+  const size = Math.min(ideal, ...lines.map((l) => fitSize(l, ideal, maxW)));
 
   const lineH = size + 16;
   const blockH = lines.length * lineH;
@@ -599,7 +614,12 @@ function capaClaraSvg(capa: PostPlan['capa']): string {
   let lines = wrap(title, size, maxW, 3);
   let lineH = Math.round(size * 1.02) + 10;
 
-  while (size > 44 && (lines.length - 1) * lineH + size > disponivel) {
+  // Encolhe também quando a manchete não cabe em 3 linhas: senão o `wrap` corta
+  // com reticências e a capa sai com frase pela metade ("POR PREÇO DE…").
+  while (
+    size > 44 &&
+    ((lines.length - 1) * lineH + size > disponivel || lines.at(-1)?.endsWith('…'))
+  ) {
     size -= 4;
     lines = wrap(title, size, maxW, 3);
     lineH = Math.round(size * 1.02) + 10;
@@ -742,7 +762,17 @@ export async function renderCapa(
 function ctaSvg(plano: PostPlan['cta']): string {
   const maxW = S - 120;
   const head = cleanTitle(plano.headline);
-  const headSize = fitSize(head, 108, maxW);
+  // Até duas linhas: numa só, a pergunta inteira encolhia até ficar ilegível —
+  // e por isso o limite era tão curto que a IA escrevia frase pela metade.
+  let headSize = 96;
+  let headLines = wrap(head, headSize, maxW, 2);
+  while (headSize > 60 && headLines.at(-1)?.endsWith('…')) {
+    headSize -= 6;
+    headLines = wrap(head, headSize, maxW, 2);
+  }
+  headSize = Math.min(headSize, ...headLines.map((l) => fitSize(l, headSize, maxW)));
+  const headLineH = Math.round(headSize * 1.12);
+  const headY = S / 2 - 80 - (headLines.length - 1) * headLineH;
   // É o único slide em que o pedido é o assunto — por isso o que tem no grupo e
   // o porquê de entrar hoje são escritos pela IA em cima das ofertas do dia, e
   // não uma frase fixa que vira moldura de tanto se repetir.
@@ -755,8 +785,10 @@ function ctaSvg(plano: PostPlan['cta']): string {
 
   const parts: string[] = [
     `<rect x="0" y="0" width="${S}" height="${S}" fill="#000" fill-opacity="0.62"/>`,
-    `<text x="${S / 2}" y="${S / 2 - 80}" fill="${ACCENT}" font-family="${FONT}"
-       font-weight="800" font-size="${headSize}" text-anchor="middle">${esc(head)}</text>`,
+    ...headLines.map(
+      (l, i) => `<text x="${S / 2}" y="${headY + i * headLineH}" fill="${ACCENT}" font-family="${FONT}"
+       font-weight="800" font-size="${headSize}" text-anchor="middle">${esc(l)}</text>`,
+    ),
     `<text x="${S / 2}" y="${S / 2 + 6}" fill="#FFFFFF" font-family="${FONT}"
        font-weight="600" font-size="${fitSize(linha1, 44, maxW)}" text-anchor="middle">${esc(linha1)}</text>`,
     `<text x="${S / 2}" y="${S / 2 + 68}" fill="#FFFFFF" font-family="${FONT}"
@@ -779,6 +811,15 @@ function ctaSvg(plano: PostPlan['cta']): string {
   }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${S}" height="${S}">${parts.join('')}</svg>`;
+}
+
+/** Slide final sobre a foto do produto desfocada. Exportada pra refazer só ele. */
+export async function renderCta(cta: PostPlan['cta'], fundo: string, out: string): Promise<void> {
+  const bg = await sharp(fundo).resize(S, S, { fit: 'cover' }).blur(30).toBuffer();
+  await sharp(bg)
+    .composite([{ input: Buffer.from(ctaSvg(cta)), top: 0, left: 0 }])
+    .jpeg({ quality: 94, mozjpeg: true })
+    .toFile(out);
 }
 
 /**
@@ -886,11 +927,7 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
     await renderCapa(plan.capa, retrato, src, capaPath);
 
     const ctaPath = resolve(outDir, `${String(ctaRank).padStart(2, '0')}-CTA.jpg`);
-    const ctaBg = await sharp(src).resize(S, S, { fit: 'cover' }).blur(30).toBuffer();
-    await sharp(ctaBg)
-      .composite([{ input: Buffer.from(ctaSvg(plan.cta)), top: 0, left: 0 }])
-      .jpeg({ quality: 94, mozjpeg: true })
-      .toFile(ctaPath);
+    await renderCta(plan.cta, src, ctaPath);
 
     // Capa e CTA entram na lista devolvida. Ficavam de fora, e no card único
     // isso passava: a numeração começando em 02 já sugeria a capa. Na grade os
