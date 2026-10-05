@@ -12,6 +12,7 @@
     "db:down": "docker compose down",
     "deals": "tsx src/cli.ts deals",
     "send": "tsx src/cli.ts send",
+    "buscar": "tsx src/cli.ts buscar",
     "ideia": "tsx src/cli.ts ideia",
     "photos": "tsx src/cli.ts photos",
     "photos:capa": "tsx src/cli.ts photos:capa",
@@ -25,7 +26,8 @@
     "db:limpar": "tsx src/cli.ts db:limpar",
     "wa:login": "tsx src/cli.ts wa:login",
     "wa:groups": "tsx src/cli.ts wa:groups",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@types/pg": "^8.23.1",

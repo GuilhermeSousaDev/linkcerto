@@ -3,6 +3,8 @@ import type { Scored } from '../domain/scoring.js';
 import { rotuloProduto } from '../domain/produto.js';
 import type { PostPlan, ForaDoPublico } from '../ai/index.js';
 import type { ImageScore } from '../media/imagescore.js';
+import type { SearchIntent } from '../domain/intencao.js';
+import type { BuscaSobDemanda, Resultado } from '../services/sobDemanda.js';
 
 /** Tudo que o usuário vê no terminal. Nenhum serviço imprime — só daqui. */
 
@@ -136,4 +138,111 @@ export function proximoPasso(linhas: [string, string][]): void {
   const larg = Math.max(...linhas.map(([cmd]) => cmd.length));
   for (const [cmd, nota] of linhas) linha(`  ${cmd.padEnd(larg)}  ${nota}`);
   linha();
+}
+
+// ─── Busca sob demanda ──────────────────────────────────────────────────────
+
+const lista = (v: string[]) => v.join(', ');
+
+/** O pedido como o sistema entendeu. Com `avisos` (o `--debug`), o que foi corrigido na IA. */
+export function intencao(i: SearchIntent, avisos: string[]): void {
+  linha('\n🔎 BUSCA SOB DEMANDA\n');
+  linha(`Pedido:\n   ${i.originalQuery}\n`);
+  linha('Busca estruturada:');
+  const campos: [string, string | null][] = [
+    ['Produto', i.product],
+    ['Categoria', [i.category, i.subcategory].filter(Boolean).join(' › ') || null],
+    ['Público', i.audience],
+    ['Marca', lista(i.brand) || null],
+    ['Modelo', i.model],
+    ['Cor', lista(i.color) || null],
+    ['Tamanho', lista(i.size) || null],
+    ['Material', lista(i.material) || null],
+    ['Finalidade', lista(i.purpose) || null],
+    ['Características', lista(i.features) || null],
+    ['Preço mínimo', i.priceMin !== null ? brl(i.priceMin) : null],
+    ['Preço máximo', i.priceMax !== null ? brl(i.priceMax) : null],
+    ['Excluir', lista(i.exclusions) || null],
+  ];
+  for (const [nome, v] of campos) if (v) linha(`   ${nome}: ${v}`);
+  linha(`   Keywords: ${i.keywords.join(' | ')}`);
+  if (i.confidence < 0.6) linha(`   ⚠️  pedido vago (confiança ${i.confidence.toFixed(2)}) — detalhe mais se puder`);
+  if (i.audience === 'infantil') linha('   ⚠️  produto infantil é sempre descartado pelos filtros do LinkCerto');
+  for (const a of avisos) linha(`   ℹ️  ${a}`);
+}
+
+function resultado(r: Resultado, i: number, debug: boolean, foraDoOrcamento = false): void {
+  const s = r.s;
+  const o = s.offer;
+  linha(`${String(i + 1).padStart(2)}. ${o.title.slice(0, 80)}`);
+  linha(
+    o.priceMax !== null
+      ? `    a partir de ${brl(o.price)} (variações até ${brl(o.priceMax)})`
+      : `    ${brl(o.price)}`,
+  );
+  if (r.orcamento.parcial) linha('    ⚠️  só algumas variações cabem no orçamento — confira a que a pessoa quer');
+  if (foraDoOrcamento) {
+    const onde = r.orcamento.lado === 'abaixo' ? 'abaixo do mínimo pedido' : 'acima do orçamento';
+    linha(`    ⚠️  ${brl(r.orcamento.distancia)} ${onde}`);
+  }
+  const social: string[] = [];
+  if (o.rating) social.push(`⭐ ${o.rating.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`);
+  if (o.sold) social.push(`🛒 ${o.sold.toLocaleString('pt-BR')} vendidos`);
+  if (social.length) linha(`    ${social.join(' · ')}`);
+
+  // Histórico: só afirma o que mediu. Sem baseline, diz isso — nada de "-X%".
+  if (s.mode === 'history' && s.baseline) {
+    const real = s.realDiscount ?? 0;
+    linha(
+      real > 0
+        ? `    📉 ${Math.round(real * 100)}% abaixo do preço acompanhado (${brl(s.baseline)})`
+        : `    📊 no preço de sempre (${brl(s.baseline)})`,
+    );
+    if (s.isLowest) linha('    🏆 menor preço que já acompanhamos');
+  } else {
+    linha('    ℹ️  sem histórico suficiente — desconto não verificado');
+  }
+
+  linha(`    Match: ${r.match.score} · Score: ${r.final.toFixed(0)}`);
+  if (debug) {
+    const c = s.componentes;
+    linha(
+      `    curadoria ${s.score} (quality ${c.quality} · price ${c.price} · social ${c.social} · ` +
+        `lowest ${c.lowest} · commission ${c.commission}) · tipo ${s.dealType ?? '—'}`,
+    );
+    if (r.match.tem.length) linha(`    ✓ ${lista(r.match.tem)}`);
+    if (r.match.falta.length) linha(`    ✗ ${lista(r.match.falta)}`);
+    linha(`    motivo: "${s.motivo}"`);
+  }
+  linha(`    🔗 ${o.offerLink ?? o.url}`);
+  linha();
+}
+
+/**
+ * O resultado é só pra você: nenhum texto pronto pro cliente. Você escolhe o
+ * que mandar, quanto e como.
+ */
+export function buscaSobDemanda(r: BuscaSobDemanda, debug: boolean): void {
+  if (debug) {
+    linha('\n### SEARCH');
+    linha(`   queries executadas: ${r.queries}`);
+    linha(`   produtos encontrados: ${r.encontrados}`);
+    linha(`   após deduplicação: ${r.unicos}`);
+    linha(`   descartes: ${JSON.stringify(r.descartes)}`);
+  }
+  linha(`\nForam encontrados: ${r.unicos} produtos`);
+  linha(`Após filtros: ${r.aprovados} produtos\n`);
+
+  if (r.resultados.length) {
+    linha(`TOP ${r.resultados.length}:\n`);
+    r.resultados.forEach((x, i) => resultado(x, i, debug));
+  } else {
+    linha('Não encontrei opções que atendam simultaneamente aos critérios.\n');
+  }
+
+  // Sem resultado, os próximos são a resposta; com resultado, só no debug.
+  if (r.proximos.length && (!r.resultados.length || debug)) {
+    linha(`### PRÓXIMOS DO PEDIDO (${r.proximos.length}) — passaram na qualidade, fora do orçamento\n`);
+    r.proximos.forEach((x, i) => resultado(x, i, debug, true));
+  }
 }

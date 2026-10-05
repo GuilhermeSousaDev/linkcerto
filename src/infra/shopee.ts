@@ -166,18 +166,26 @@ function toOffer(n: Record<string, unknown>): Offer | null {
   };
 }
 
+/**
+ * Ordem do feed. Mais vendidos é o padrão do radar (o que todo mundo compra);
+ * relevância serve à busca sob demanda, onde importa achar O produto pedido.
+ */
+export const ORDEM = { relevancia: 1, maisVendidos: 2 } as const;
+type Ordem = (typeof ORDEM)[keyof typeof ORDEM];
+
 /** Varre páginas disjuntas do feed para um termo. */
 async function sweep(
   keyword: string,
   pages: number,
   into: Map<string, Offer>,
+  sortType: Ordem,
 ): Promise<void> {
   for (let page = 1; page <= pages; page++) {
     const data = await request<FeedResponse>(PRODUCT_OFFER_QUERY, {
       page,
       limit: config.SHOPEE_PAGE_SIZE,
       keyword,
-      sortType: 2, // mais vendidos
+      sortType,
       listType: 0,
     });
 
@@ -200,6 +208,7 @@ async function sweep(
 export async function fetchOffers(
   keywords: string[],
   pages = config.SHOPEE_PAGES,
+  sortType: Ordem = ORDEM.maisVendidos,
 ): Promise<Offer[]> {
   const byId = new Map<string, Offer>();
 
@@ -209,7 +218,7 @@ export async function fetchOffers(
 
   for (const [i, keyword] of keywords.entries()) {
     const before = byId.size;
-    await sweep(keyword, pages, byId);
+    await sweep(keyword, pages, byId, sortType);
     log.info({ keyword, novos: byId.size - before }, 'termo buscado');
     if (i < keywords.length - 1) await sleep(400);
   }

@@ -41,6 +41,25 @@ export function frase(nome: string): string | undefined {
   return palavras.join(' ').trim() || undefined;
 }
 
+/**
+ * As palavras soltas depois do subcomando, sem as opções.
+ *
+ * `npm run buscar -- --debug tênis de corrida até 200 --top 5` → "tênis de
+ * corrida até 200". `comValor` são as opções que consomem a palavra seguinte.
+ */
+export function posicionais(comValor: string[] = []): string {
+  const palavras: string[] = [];
+  for (let j = 3; j < ARGV.length; j++) {
+    const arg = ARGV[j]!;
+    if (arg.startsWith('--')) {
+      if (comValor.includes(arg.slice(2))) j++;
+      continue;
+    }
+    palavras.push(arg);
+  }
+  return palavras.join(' ').trim();
+}
+
 /** Lista de números: `--skip 1,4` → [1, 4]. */
 export function numeros(nome: string): Set<number> {
   return new Set(

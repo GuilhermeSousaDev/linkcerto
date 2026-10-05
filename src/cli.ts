@@ -14,8 +14,10 @@ import * as ofertas from './services/ofertas.js';
 import * as conteudo from './services/conteudo.js';
 import * as grupo from './services/grupo.js';
 import * as limpeza from './services/limpeza.js';
+import * as sobDemanda from './services/sobDemanda.js';
+import { interpretarPedido } from './ai/intencao.js';
 import * as out from './cli/saida.js';
-import { comando, flag, frase, num, numeros, texto } from './util/args.js';
+import { comando, flag, frase, num, numeros, posicionais, texto } from './util/args.js';
 import { idadeEmTexto, salvar, ultimoSalvo } from './util/arquivo.js';
 
 /**
@@ -38,6 +40,9 @@ Alerta de Preços
 
   npm run deals       Mostra as melhores ofertas e salva o lote (não envia)
   npm run send        Manda pro grupo do WhatsApp o lote que o deals mostrou
+  npm run buscar      Busca sob demanda pra um pedido: só mostra as opções,
+                      não envia nada. Ex: npm run buscar -- tênis corrida até 200
+                      (--debug explica a busca e o score, --top N)
   npm run ideia       A IA monta o post de hoje: capa, ordem, legenda, roteiro
   npm run photos      Gera os cards 1080x1080 com o plano da IA
   npm run photos:capa Refaz só a capa do último post: próximo retrato do rodízio
@@ -454,6 +459,35 @@ async function photosSend(): Promise<void> {
   out.linha('\nPronto. Baixe no celular e poste pelo app do TikTok.\n');
 }
 
+/**
+ * Busca sob demanda: você já conversou com a pessoa e sabe o que ela quer.
+ *
+ * Só te devolve as opções — nada é enviado pra ninguém. Quem escolhe o que
+ * mandar, quanto e com que texto é você.
+ */
+async function buscar(): Promise<void> {
+  const pedido = posicionais(['top', 'paginas']);
+  if (!pedido) {
+    throw new Error('Diga o que buscar:\n  npm run buscar -- tênis de corrida masculino preto até 200 reais');
+  }
+  const debug = flag('debug');
+
+  const { intent, avisos } = await interpretarPedido(pedido);
+  out.intencao(intent, debug ? avisos : []);
+
+  const r = await sobDemanda.searchByIntent(intent, sobDemanda.fontesReais(num('paginas', 2)), {
+    top: num('top', 10),
+  });
+
+  // Link de afiliado em tudo que aparece, e histórico do que você viu — o
+  // mesmo caminho do `deals`.
+  const vistos = [...r.resultados, ...(r.resultados.length ? [] : r.proximos)].map((x) => x.s);
+  await ofertas.garantirLinks(vistos);
+  await ofertas.registrar(vistos);
+
+  out.buscaSobDemanda(r, debug);
+}
+
 async function waLogin(): Promise<void> {
   const wa = new WhatsApp();
   await wa.connect(180_000);
@@ -477,6 +511,7 @@ async function waGroups(): Promise<void> {
 
 const COMANDOS: Record<string, () => Promise<void> | void> = {
   deals,
+  buscar,
   send,
   ideia,
   photos,

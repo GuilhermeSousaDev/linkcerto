@@ -140,7 +140,18 @@ const QUEDA_MIN_MENOR_PRECO = 0.03;
 /** Loja anuncia X%, medimos Y%: acima desta diferença a âncora é inflada. */
 const GAP_ANCORA = 0.25;
 
-export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
+/**
+ * `pedido`: busca sob demanda (`npm run buscar`). Os filtros de qualidade são
+ * os MESMOS — produto ruim não passa porque alguém pediu. O que muda é só a
+ * última pergunta: no grupo é "isso merece ser empurrado pra todo mundo?"
+ * (exige oferta, menor preço ou achado); num pedido é "isso atende bem quem
+ * pediu?". Produto bom sem destaque de preço volta com `dealType` null.
+ */
+export function scoreOffer(
+  offer: Offer,
+  snaps: Snapshot[],
+  opts: { pedido?: boolean } = {},
+): Scored {
   const produto = analisarProduto(offer.title, offer.price);
   const social = socialScore(offer.rating, offer.sold);
   const base = (rejected: string | null, extra: Partial<Scored> = {}): Scored => ({
@@ -205,10 +216,11 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
   const consagrado =
     (offer.rating ?? 0) >= config.TOP_RATING && (offer.sold ?? 0) >= config.TOP_SALES;
 
-  let dealType: DealType;
+  let dealType: DealType | null;
   if (realDiscount !== null && realDiscount >= config.MIN_DISCOUNT) dealType = 'oferta';
   else if (isLowest) dealType = 'menor_preco';
   else if (consagrado) dealType = 'achado';
+  else if (opts.pedido) dealType = null;
   else return base(hasBaseline ? 'desconto_pequeno' : 'prova_social_fraca', extra);
 
   // ── Componentes ──
@@ -249,7 +261,8 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
   // R$ 50 de comissão = cheio.
   const commission = 100 * clamp01(((offer.commissionRate ?? 0) * offer.price) / 50);
 
-  const w = PESOS[dealType];
+  // Sem tipo (só no pedido): pesa como achado — nada verificado sobre preço.
+  const w = PESOS[dealType ?? 'achado'];
   const merito = (w.price * price + w.social * social + w.lowest * lowest) / 100;
   // Comissão é desempate, não mérito: escalada pelo próprio mérito, um
   // produto fraco não sobe por pagar mais.
@@ -280,7 +293,7 @@ export function scoreOffer(offer: Offer, snaps: Snapshot[]): Scored {
 }
 
 function explicar(
-  tipo: DealType,
+  tipo: DealType | null,
   o: Offer,
   real: number | null,
   baseline: number | null,
