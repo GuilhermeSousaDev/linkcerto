@@ -177,13 +177,20 @@ function briefing(list: Scored[]): string {
 
   return faixa + list
     .map((s, i) => {
-      const pct = Math.round(s.discount * 100);
       const campos = [
         s.offer.priceMax !== null
           ? `preco A PARTIR DE ${brl(s.offer.price)} (variacoes ate ${brl(s.offer.priceMax)})`
           : `preco ${brl(s.offer.price)}`,
-        `desconto ${pct}% (${s.mode === 'history' ? 'medido por nos' : 'anunciado pela loja'})`,
       ];
+      // O tipo da curadoria diz o que dá pra afirmar. ACHADO não tem desconto
+      // verificado: o número da loja nem vai pra IA, senão ele vira "-60%" no texto.
+      if (s.dealType === 'oferta' && s.realDiscount !== null) {
+        campos.push(`OFERTA: ${Math.round(s.realDiscount * 100)}% abaixo do preco que medimos`);
+      } else if (s.dealType === 'menor_preco') {
+        campos.push('MENOR PRECO: sem desconto grande, mas o menor que ja medimos');
+      } else {
+        campos.push('ACHADO: sem desconto verificado, entrou pela nota e vendas — NAO fale em % off nem em promocao');
+      }
       if (s.mode === 'history' && s.baseline) campos.push(`preco normal medido ${brl(s.baseline)}`);
       if (s.isLowest) campos.push('MENOR PRECO QUE JA VIMOS');
       if (s.offer.rating) campos.push(`nota ${s.offer.rating.toFixed(1)}`);
@@ -272,7 +279,7 @@ PERFIL: ${perfil}${bloco}${castings}
 ${
   medidos
     ? `${medidos} destes têm preço normal MEDIDO por nós ao longo do tempo. Esse é o diferencial do perfil: os outros perfis repetem o desconto que a loja declarou.`
-    : 'Nenhum tem histórico medido ainda — os descontos são os que a loja anuncia. Não afirme que "medimos" nada.'
+    : 'Nenhum tem histórico medido ainda — todos são ACHADOS (nota e vendas), não promoções. Não afirme que "medimos" nada nem cite porcentagem de desconto.'
 }
 
 DADOS (só isso existe):

@@ -8,6 +8,7 @@ import type { Genero } from './domain/genero.js';
 import { baixarDoPexels, castings, fotosDe, listarCapas, preparar } from './media/capas.js';
 import { folhaDeProvas } from './media/cards.js';
 import { avisoDeAlta, loteToJson } from './domain/lote.js';
+import { curar } from './domain/curadoria.js';
 import { planToJson } from './ai/index.js';
 import * as ofertas from './services/ofertas.js';
 import * as conteudo from './services/conteudo.js';
@@ -59,9 +60,9 @@ Alerta de Preços
            --grade       Post de catálogo: 9 produtos por slide, com código
                          embaixo de cada um (padrão: ${GRADE_TOP} produtos)
            --keywords    "a,b" — os termos na mão
-           --top N       Quantos mostrar/enviar (padrão: ${config.TOP_N})
+           --top N       ATÉ quantos mostrar/enviar (padrão: ${config.TOP_N})
            --skip 1,4    Descarta ofertas da lista (foto ruim) e puxa as próximas
-           --all         Mostra também os descartados e o motivo
+           --all         Explica o score de cada oferta e mostra os descartados
            --dias N      Dias sem repetir um produto (padrão: ${config.POST_COOLDOWN_DAYS})
            --repetir     Ignora essa janela
            --female      Busca a versão feminina do tema (ignora o gênero do
@@ -160,9 +161,20 @@ async function deals(): Promise<void> {
 
   out.linha(`\n${elegiveis.length} ofertas passaram nos filtros (de ${scored.length})`);
   if (jaEnviadas) out.linha(`${jaEnviadas} já foram pro grupo e ficaram de fora`);
+
+  // ATÉ o top, não "o top": o que não alcança o MIN_SCORE fica de fora mesmo
+  // que o lote saia curto. Ver `domain/curadoria.ts`.
+  const top = num('top', config.TOP_N);
+  const { escolhidas: lista, abaixoDoCorte, diversidade } = curar(ineditas, top);
+  if (abaixoDoCorte.length) {
+    out.linha(`${abaixoDoCorte.length} ficaram abaixo do score mínimo (${config.MIN_SCORE})`);
+  }
+  if (lista.length < top) {
+    out.linha(`Lote com ${lista.length} de até ${top}: só isso passou na curadoria.`);
+  }
   out.linha('');
-  const lista = ineditas.slice(0, num('top', config.TOP_N));
-  lista.forEach((s, i) => out.oferta(s, i));
+  const detalhe = flag('all');
+  lista.forEach((s, i) => out.oferta(s, i, undefined, detalhe ? diversidade.get(s) : undefined));
 
   // Só o que você viu vira histórico. Ver `services/ofertas.registrar`.
   await ofertas.registrar(lista);
@@ -176,17 +188,18 @@ async function deals(): Promise<void> {
     ]);
   }
 
-  if (flag('all')) {
+  if (detalhe) {
     const motivos: Record<string, number> = {};
     for (const s of scored) if (s.rejected) motivos[s.rejected] = (motivos[s.rejected] ?? 0) + 1;
     out.linha(`Descartados: ${JSON.stringify(motivos)}`);
+    out.abaixoDoCorte(abaixoDoCorte);
   }
 
   if (!elegiveis.some((s) => s.mode === 'history')) {
     out.linha(
-      'ℹ️  Nenhum produto tem histórico ainda, então os descontos acima são os\n' +
-        '   anunciados pela Shopee. Rode alguns dias seguidos e o sistema passa\n' +
-        '   a medir o preço real sozinho.',
+      'ℹ️  Nenhum produto tem histórico ainda, então tudo acima é ACHADO (prova\n' +
+        '   social) — o desconto da loja não é usado como promoção. Rode alguns\n' +
+        '   dias seguidos e o sistema passa a medir o preço real sozinho.',
     );
   }
 }
@@ -218,7 +231,7 @@ async function send(): Promise<void> {
   // Sem lote, corta os já enviados ANTES do top — senão eles ocupam as vagas.
   let candidatos = lote
     ? elegiveis
-    : (await grupo.naoRepetidas(elegiveis)).slice(0, num('top', config.TOP_N));
+    : curar(await grupo.naoRepetidas(elegiveis), num('top', config.TOP_N)).escolhidas;
   if (lote) {
     const r = grupo.ofertasDoLote(lote, elegiveis);
     candidatos = r.picked;
@@ -237,6 +250,13 @@ async function send(): Promise<void> {
       out.linha(`\n⚠️  ${caiu.length} do lote não passam mais nos filtros e ficaram de fora:`);
       caiu.forEach((s) => out.linha(`   ${s.offer.title.slice(0, 46)} — ${s.rejected}`));
       candidatos = candidatos.filter((s) => !s.rejected);
+    }
+
+    // Mesmo corte do `deals`: se o preço novo derrubou o score, não vai.
+    const fraco = candidatos.filter((s) => s.score < config.MIN_SCORE);
+    if (fraco.length) {
+      out.linha(`\n⚠️  ${fraco.length} do lote caíram abaixo do score mínimo e ficaram de fora`);
+      candidatos = candidatos.filter((s) => s.score >= config.MIN_SCORE);
     }
   }
 

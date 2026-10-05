@@ -9,11 +9,23 @@ import type { ImageScore } from '../media/imagescore.js';
 export const linha = (s = '') => console.log(s);
 export const avisos = (list: string[]) => list.forEach((a) => linha(a));
 
-export function oferta(s: Scored, i: number, foto?: ImageScore): void {
-  const pct = Math.round(s.discount * 100);
-  const modo = s.mode === 'history' ? '✅ histórico' : '🏷️  anunciado';
+const TIPO: Record<NonNullable<Scored['dealType']>, string> = {
+  oferta: '🔥 OFERTA',
+  menor_preco: '🏆 MENOR PREÇO',
+  achado: '⭐ ACHADO',
+};
 
-  linha(`${String(i + 1).padStart(2)}. [${s.score.toFixed(0).padStart(3)}] ${modo}  -${pct}%  ${brl(s.offer.price)}`);
+/**
+ * Uma oferta da lista. Com `diversidade` (o `--all`), explica o score: cada
+ * componente e o motivo — é o que permite ajustar o algoritmo olhando o porquê.
+ */
+export function oferta(s: Scored, i: number, foto?: ImageScore, diversidade?: number): void {
+  const tipo = s.dealType ? TIPO[s.dealType] : '—';
+  // Só o desconto medido aparece como "-X%". O da loja não é afirmação nossa.
+  const queda = s.realDiscount !== null ? `  -${Math.round(s.realDiscount * 100)}% medido` : '';
+  const preco = s.offer.priceMax !== null ? `a partir de ${brl(s.offer.price)}` : brl(s.offer.price);
+
+  linha(`${String(i + 1).padStart(2)}. [${s.score.toFixed(0).padStart(3)}] ${tipo}${queda}  ${preco}`);
   linha(`    ${s.offer.title.slice(0, 70)}`);
   const rotulo = rotuloProduto(s.produto);
   if (rotulo) linha(`    ${rotulo}`);
@@ -23,8 +35,31 @@ export function oferta(s: Scored, i: number, foto?: ImageScore): void {
   linha(
     `    ⭐ ${s.offer.rating ?? '-'} · ${s.offer.sold ?? 0} vendidos · comissão ${((s.offer.commissionRate ?? 0) * 100).toFixed(0)}%`,
   );
+  if (s.reenvioDe !== undefined) linha(`    🔻 reenvio: mandamos por ${brl(s.reenvioDe)}`);
   if (foto) linha(`    foto: ${foto.score}  (branco ${foto.whiteRatio} · entropia ${foto.entropy})`);
+  if (diversidade !== undefined) {
+    const c = s.componentes;
+    linha(
+      `    score ${s.score} · type ${s.dealType} · modo ${s.mode}` +
+        (diversidade < 1 ? ` · diversidade ×${diversidade.toFixed(2)}` : ''),
+    );
+    linha(
+      `    quality ${c.quality} · price ${c.price} · social ${c.social} · ` +
+        `lowest ${c.lowest} · commission ${c.commission}`,
+    );
+    linha(`    motivo: "${s.motivo}"`);
+  }
   linha();
+}
+
+/** No `--all`: o que passou nos filtros mas ficou abaixo do MIN_SCORE. */
+export function abaixoDoCorte(list: Scored[]): void {
+  if (!list.length) return;
+  linha(`\nAbaixo do score mínimo (${list.length}):`);
+  for (const s of list.slice(0, 10)) {
+    linha(`   [${s.score.toFixed(0).padStart(3)}] ${s.offer.title.slice(0, 50)} — ${s.motivo}`);
+  }
+  if (list.length > 10) linha(`   … e mais ${list.length - 10}`);
 }
 
 export function foraDoPublico(fora: ForaDoPublico[], publico: string): void {

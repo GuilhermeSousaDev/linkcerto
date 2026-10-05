@@ -87,6 +87,9 @@ Liste os índices dos produtos que NÃO servem para esse público.
   aberta, vestido e saia são femininos mesmo sem a palavra "feminina" no título.
 - Item unissex, neutro ou "para homens e mulheres" está DENTRO.
 - Faixa etária errada (infantil num perfil adulto) está fora.
+- CATEGORIA não é critério: o público diz pra quem as ofertas interessam, não
+  qual categoria pode entrar. Casa, cozinha, eletrônico, pet e utilidades
+  servem pra qualquer público adulto — estão DENTRO.
 - Na dúvida, está DENTRO. Marcar demais é pior que deixar passar um.
 - "motivo" em 3 ou 4 palavras.
 

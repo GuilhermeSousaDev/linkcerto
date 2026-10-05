@@ -18,6 +18,22 @@ export interface Niche {
 }
 
 const NICHES: Record<string, Niche> = {
+  // O grupo de curadoria: amplo em categoria, rigoroso na qualidade. São 8
+  // termos — cada um custa SHOPEE_PAGES chamadas, então baixe as páginas (2-3).
+  achados: {
+    keywords: [
+      'fone bluetooth',
+      'organizador cozinha',
+      'garrafa termica',
+      'camiseta masculina',
+      'tenis feminino',
+      'skincare',
+      'mochila',
+      'luminaria led',
+    ],
+    descricao: 'Achados gerais (curadoria)',
+    comissao: 'mista (6-18%)',
+  },
   relogios: {
     keywords: ['relogio masculino', 'relogio feminino', 'smartwatch', 'relogio digital'],
     descricao: 'Relógios e smartwatches',
@@ -87,7 +103,8 @@ const NICHES: Record<string, Niche> = {
 
 /**
  * Termos da busca. Uma única fonte: `--keywords` na linha de comando sobrescreve
- * `SHOPEE_KEYWORDS` do `.env`. Sem nenhum dos dois, cai no feed geral.
+ * `SHOPEE_KEYWORDS` do `.env`. Sem nenhum dos dois, o comando pede um `--tema`
+ * — o feed geral não é usado.
  *
  * Os nichos acima são catálogo, não configuração — `npm run niches` imprime a
  * linha pronta pra você colar no `.env`.

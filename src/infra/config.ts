@@ -55,7 +55,8 @@ const schema = z.object({
   SHOPEE_PAGE_SIZE: z.coerce.number().int().min(1).max(100).default(50),
   /**
    * Termos de busca, separados por vírgula — define o nicho do grupo.
-   * Vazio = feed geral de mais vendidos (produto aleatório, funil incoerente).
+   * Vazio = o assunto vem do `--tema`/`--keywords`. O feed geral nunca é usado:
+   * ele traz produto aleatório e quebra a curadoria.
    * Cada termo custa SHOPEE_PAGES chamadas, então use 3-6 termos e menos páginas.
    */
   SHOPEE_KEYWORDS: z.string().default(''),
@@ -63,11 +64,11 @@ const schema = z.object({
   // ── Filters ──
   MIN_RATING: z.coerce.number().min(0).max(5).default(4.3),
   MIN_SALES: z.coerce.number().int().min(0).default(100),
-  /** Minimum discount to bother sending. */
+  /** Queda REAL mínima (medida no histórico) pra virar OFERTA. */
   MIN_DISCOUNT: z.coerce.number().min(0).max(1).default(0.1),
   /**
-   * Produto consagrado passa mesmo sem desconto: nota e vendas acima disto são
-   * a prova de que vale a compra. Não é vendido como promoção — ver `semDesconto`.
+   * Nota e vendas acima disto fazem um ACHADO: entra sem desconto verificado,
+   * pela prova social. Não é vendido como promoção — ver `dealType`.
    */
   TOP_RATING: z.coerce.number().min(0).max(5).default(4.7),
   TOP_SALES: z.coerce.number().int().min(0).default(1000),
@@ -79,14 +80,29 @@ const schema = z.object({
   /** Above this, it's a pricing error or bait, not a deal. */
   MAX_DISCOUNT: z.coerce.number().min(0).max(1).default(0.9),
   /**
-   * Quantas ofertas mostrar/enviar por execução — vale pro `deals`, `send` e
-   * `photos`. No `send` isso é o número de mensagens no WhatsApp: 15 leva uns
-   * 3-4 minutos com o intervalo aleatório, e lote maior = mais risco de bloqueio
-   * no cliente não-oficial.
+   * ATÉ quantas ofertas mostrar/enviar por execução — vale pro `deals`, `send`
+   * e `photos`. É teto, não meta: se só 6 passam na curadoria, saem 6. No
+   * `send` isso é o número de mensagens no WhatsApp: 15 leva uns 3-4 minutos
+   * com o intervalo aleatório, e lote maior = mais risco de bloqueio no
+   * cliente não-oficial.
    */
   TOP_N: z.coerce.number().int().min(1).default(15),
-  /** Don't resend an item unless it's this much cheaper than when last sent. */
-  RESEND_DROP: z.coerce.number().min(0).max(1).default(0.05),
+  /**
+   * Score mínimo (0-100) pra ir pro grupo. Abaixo disso passou nos filtros mas
+   * é mediano — e mediano não vai, mesmo que o lote fique curto. Ver `curadoria.ts`.
+   */
+  MIN_SCORE: z.coerce.number().min(0).max(100).default(35),
+  /**
+   * Quanto cada produto da mesma família (camiseta, perfume, fone…) já no lote
+   * desconta do próximo. 1 = sem diversidade; 0,85 = a 2ª vale 85%, a 3ª 72%.
+   */
+  DIVERSITY_DECAY: z.coerce.number().min(0).max(1).default(0.85),
+  /**
+   * Só reenvia um produto se ele caiu pelo menos isso desde o último envio. A
+   * mensagem diz que é nova queda. Pequeno demais vira o mesmo produto toda
+   * semana por centavos.
+   */
+  RESEND_DROP: z.coerce.number().min(0).max(1).default(0.1),
   /**
    * Dias que um produto fica fora dos posts depois de virar card.
    *

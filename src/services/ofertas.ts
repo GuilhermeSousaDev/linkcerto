@@ -105,6 +105,13 @@ export async function resolverTermos(p: PedidoDeBusca): Promise<Termos> {
       avisos.push(`\n📚 IA desligada — tema "${p.tema}" caiu no nicho "${achado.nome}"`);
       return entregar(achado.niche.keywords);
     }
+    // Sem nicho e sem termos fixos, sobraria o feed geral — que não é usado.
+    if (!base.length) {
+      throw new Error(
+        `IA desligada e "${p.tema}" não está no catálogo de nichos (npm run niches).\n` +
+          `Diga o que buscar: npm run ${p.comando} -- --keywords "a,b"`,
+      );
+    }
     return entregar(base);
   }
 

@@ -166,7 +166,7 @@ function toOffer(n: Record<string, unknown>): Offer | null {
   };
 }
 
-/** Varre páginas disjuntas do feed para um termo (ou o feed geral, se vazio). */
+/** Varre páginas disjuntas do feed para um termo. */
 async function sweep(
   keyword: string,
   pages: number,
@@ -192,22 +192,19 @@ async function sweep(
 }
 
 /**
- * Busca as ofertas.
+ * Busca as ofertas, termo a termo.
  *
- * Com termos, busca um a um — é isso que mantém o grupo em um nicho só. Sem
- * termos, cai no feed geral de mais vendidos, que traz produto aleatório e
- * quebra a coerência do funil.
+ * Sem termos é erro, não feed geral: o feed de mais vendidos traz produto
+ * aleatório, e curadoria começa por buscar nas categorias certas.
  */
 export async function fetchOffers(
-  keywords: string[] = [],
+  keywords: string[],
   pages = config.SHOPEE_PAGES,
 ): Promise<Offer[]> {
   const byId = new Map<string, Offer>();
 
   if (keywords.length === 0) {
-    await sweep('', pages, byId);
-    log.info({ pages, found: byId.size }, 'ofertas do feed geral');
-    return [...byId.values()];
+    throw new Error('Busca sem termos — o feed geral da Shopee não é usado. Passe --tema ou --keywords.');
   }
 
   for (const [i, keyword] of keywords.entries()) {

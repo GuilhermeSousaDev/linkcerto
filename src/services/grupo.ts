@@ -31,12 +31,21 @@ export function ofertasDoLote(lote: Lote, disponiveis: Scored[]): SelecaoDoLote 
   return casarLote(lote, disponiveis);
 }
 
-/** Tira o que já foi enviado e não ficou mais barato desde então. */
+/**
+ * Tira o que já foi enviado e não ficou mais barato desde então.
+ *
+ * O que volta por ter caído RESEND_DROP desde o último envio sai marcado em
+ * `reenvioDe`, pra mensagem dizer que é uma nova queda — e não parecer que o
+ * grupo está repetindo produto.
+ */
 export async function naoRepetidas(list: Scored[]): Promise<Scored[]> {
   const enviados = await ultimoEnvio(list.map((s) => s.offer.id));
   return list.filter((s) => {
     const antes = enviados.get(s.offer.id);
-    return antes === undefined || s.offer.price <= antes * (1 - config.RESEND_DROP);
+    if (antes === undefined) return true;
+    if (s.offer.price > antes * (1 - config.RESEND_DROP)) return false;
+    s.reenvioDe = antes;
+    return true;
   });
 }
 

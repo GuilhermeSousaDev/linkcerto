@@ -1,4 +1,4 @@
-import type { Scored } from './scoring.js';
+import type { DealType, Scored } from './scoring.js';
 import { rotuloProduto, tituloHonesto } from './produto.js';
 
 /**
@@ -17,59 +17,49 @@ export const brl = (v: number) =>
 // ─── WhatsApp ───────────────────────────────────────────────────────────────
 
 /**
- * O texto acompanha o modo do scoring. Com baseline medido dá pra afirmar queda
- * real; sem baseline estamos repetindo a alegação da loja, e a mensagem diz
- * "anunciado" em vez de fingir que verificamos.
- */
-/**
- * Preço "de" — o valor riscado ao lado do atual.
+ * O cabeçalho É a classificação da curadoria. Cada tipo só afirma o que dá pra
+ * provar: OFERTA tem queda medida, MENOR PREÇO tem o nosso histórico, ACHADO
+ * tem só a prova social — e por isso nunca aparece com "de/por".
  *
- * Com histórico usa o que NÓS medimos; sem histórico, o que a loja declara.
- * A diferença importa: a âncora da loja costuma ser inflada, e é justamente por
- * isso que o texto rotula a origem em vez de deixar os dois parecerem a mesma
- * coisa.
+ * Sem urgência inventada: nada de "últimas unidades", "só hoje", "corre" ou
+ * "imperdível". Não temos dado que sustente nenhum deles.
  */
-function anchorPrice(s: Scored): { value: number; medido: boolean } | null {
-  if (s.semDesconto) return null;
-  if (s.mode === 'history' && s.baseline && s.baseline > s.offer.price) {
-    return { value: s.baseline, medido: true };
-  }
-  const vd = s.offer.vendorDiscount;
-  if (vd !== null && vd > 0 && vd < 1) {
-    return { value: s.offer.price / (1 - vd), medido: false };
-  }
-  return null;
+const CABECALHO: Record<DealType, string> = {
+  oferta: '🔥 OFERTA APROVADA',
+  menor_preco: '🏆 MENOR PREÇO',
+  achado: '⭐ ACHADO',
+};
+
+/** "4,8 · 2.400 vendidos" — a prova de qualidade, igual em todo tipo. */
+function provaSocial(s: Scored): string | null {
+  const o = s.offer;
+  const partes: string[] = [];
+  if (o.rating) partes.push(`⭐ ${o.rating.toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`);
+  if (o.sold) partes.push(`${o.sold.toLocaleString('pt-BR')} vendidos`);
+  return partes.length ? partes.join(' · ') : null;
 }
 
-/** Chamada de abertura. Varia pela característica da oferta, não aleatoriamente. */
-function hook(s: Scored): string {
-  if (s.isLowest) return 'MENOR PREÇO QUE JÁ MEDIMOS 🔥';
-  // Entrou pela nota, não pelo desconto: a chamada vende a aprovação.
-  if (s.semDesconto) return 'QUEM COMPROU APROVOU ⭐';
-
-  const a = anchorPrice(s);
-  // Só cabe quando temos baseline medido pra contrapor à alegação da loja.
-  if (s.mode === 'history' && a?.medido && s.offer.vendorDiscount) {
-    const lojaPct = Math.round(s.offer.vendorDiscount * 100);
-    const realPct = Math.round(s.discount * 100);
-    if (lojaPct > realPct + 10) return `A LOJA DIZ ${lojaPct}%. O REAL É ${realPct}% 👀`;
+/**
+ * O preço, sempre honesto sobre variações: com faixa relevante o número é o
+ * da variação mais barata, e a mensagem diz "a partir de".
+ */
+function linhaDePreco(s: Scored): string {
+  const o = s.offer;
+  const atual = o.priceMax !== null ? `a partir de *${brl(o.price)}*` : `*${brl(o.price)}*`;
+  // "De/por" só com baseline medido. A âncora da loja não entra: ela é a
+  // primeira coisa que o vendedor infla.
+  if (s.dealType === 'oferta' && s.baseline && s.baseline > o.price) {
+    return `De ~${brl(s.baseline)}~ por ${atual}`;
   }
-
-  // Chamada forte só com queda que NÓS medimos. Em cima do "de" da loja ela
-  // assina embaixo de uma âncora inflada — foi assim que "CAIU MUITO" saiu num
-  // perfume de R$ 10,90.
-  if (s.mode === 'history' && s.discount >= 0.6) return 'ISSO É UM ABSURDO 🔥';
-  if (s.mode === 'history' && s.discount >= 0.45) return 'CAIU MUITO 🔥';
-  if (s.offer.rating && s.offer.rating >= 4.8) return 'NOTA QUASE PERFEITA ⭐';
-  return 'ACHADO DO DIA 🔥';
+  return `💰 ${atual.charAt(0).toUpperCase()}${atual.slice(1)}`;
 }
 
 export function formatDeal(s: Scored, link: string): string {
   const o = s.offer;
-  const a = anchorPrice(s);
+  const tipo = s.dealType ?? 'achado';
   const lines: string[] = [];
 
-  lines.push(`*${hook(s)}*`);
+  lines.push(`*${CABECALHO[tipo]}*`);
   lines.push('');
   lines.push(tituloHonesto(o.title, s.produto));
   // O que a pessoa recebe, antes do preço: barato e explicado passa confiança,
@@ -78,24 +68,27 @@ export function formatDeal(s: Scored, link: string): string {
   if (rotulo) lines.push(`_${rotulo}_`);
   lines.push('');
 
-  // Formato "de/por": é o que o nicho usa e o que faz a oferta parecer oferta.
-  if (a) {
-    lines.push(`De ~${brl(a.value)}~ por *${brl(o.price)}* 🔥`);
-    lines.push(
-      a.medido
-        ? '📊 _o "de" é o preço real que medimos, não o da loja_'
-        : '🏷️ _valor "de" anunciado pela loja_',
-    );
-  } else {
-    lines.push(`💰 *${brl(o.price)}*`);
+  lines.push(linhaDePreco(s));
+  lines.push('');
+
+  // A explicação: por que isso passou na curadoria.
+  if (tipo === 'oferta' && s.realDiscount !== null) {
+    lines.push(`📉 ${Math.round(s.realDiscount * 100)}% abaixo do preço que acompanhamos`);
+    // A loja anuncia muito mais do que medimos: dizer isso é o diferencial,
+    // e evita que a pessoa ache que a gente "errou" o desconto.
+    const vd = o.vendorDiscount;
+    if (vd !== null && Math.round(vd * 100) > Math.round(s.realDiscount * 100) + 10) {
+      lines.push(`🏷️ _a loja anuncia ${Math.round(vd * 100)}% — o real é o de cima_`);
+    }
+  }
+  if (s.isLowest) lines.push('🏆 Menor preço que já acompanhamos');
+  if (s.reenvioDe !== undefined) {
+    lines.push(`🔻 Caiu de novo: da última vez mandamos por ${brl(s.reenvioDe)}`);
   }
 
-  if (s.isLowest) lines.push('🏆 *Menor preço desde que começamos a acompanhar*');
-
-  const social: string[] = [];
-  if (o.rating) social.push(`⭐ ${o.rating.toFixed(1)}`);
-  if (o.sold) social.push(`${o.sold.toLocaleString('pt-BR')} vendidos`);
-  if (social.length) lines.push(social.join(' · '));
+  const social = provaSocial(s);
+  if (social) lines.push(social);
+  if (tipo === 'achado') lines.push('🔥 Produto muito bem avaliado');
 
   lines.push('');
   lines.push(`🛒 ${link}`);

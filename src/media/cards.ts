@@ -191,9 +191,13 @@ function overlaySvg(s: Scored, etiqueta = ''): string {
     </defs>
     <rect x="0" y="${scrimTop}" width="${S}" height="${S - scrimTop}" fill="url(#scrim)"/>`);
 
-  parts.push(pillSvg({ text: `-${pct}%`, x: margin, y: 52, fontSize: 54, bg: ACCENT, fg: INK }));
+  // O selo diz o tipo da curadoria. "-X%" só com queda medida: num ACHADO
+  // seria o desconto da loja impresso como se fosse nosso.
+  const selo =
+    s.dealType === 'oferta' ? `-${pct}%` : s.dealType === 'menor_preco' ? 'MENOR PREÇO' : 'ACHADO';
+  parts.push(pillSvg({ text: selo, x: margin, y: 52, fontSize: 54, bg: ACCENT, fg: INK }));
 
-  if (s.isLowest) {
+  if (s.isLowest && s.dealType === 'oferta') {
     parts.push(
       pillSvg({
         text: 'MENOR PREÇO',
@@ -207,13 +211,10 @@ function overlaySvg(s: Scored, etiqueta = ''): string {
   }
 
   // Preço "de" riscado ao lado do atual — é o que faz a oferta parecer oferta.
-  // Com histórico usa o baseline medido; sem histórico, a âncora da loja.
+  // Só o baseline medido, e só em OFERTA: a âncora da loja é a primeira coisa
+  // que o vendedor infla, e achado não é vendido como promoção.
   const anchor =
-    s.mode === 'history' && s.baseline && s.baseline > s.offer.price
-      ? s.baseline
-      : s.offer.vendorDiscount && s.offer.vendorDiscount < 1
-        ? s.offer.price / (1 - s.offer.vendorDiscount)
-        : null;
+    s.dealType === 'oferta' && s.baseline && s.baseline > s.offer.price ? s.baseline : null;
 
   if (tag) {
     parts.push(`

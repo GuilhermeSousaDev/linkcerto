@@ -41,6 +41,7 @@ export function loteToJson(termos: string[], list: Scored[]): string {
         id: s.offer.id,
         titulo: s.offer.title,
         preco: s.offer.price,
+        tipo: s.dealType,
         desconto: Math.round(s.discount * 100),
       })),
     },
