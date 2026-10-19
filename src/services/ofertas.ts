@@ -4,11 +4,11 @@ import {
   ofertasDoBanco,
   ofertasPorIds,
   postedSince,
-  guardarOfferLink,
   quantasNoBanco,
   record,
 } from '../infra/db.js';
 import { affiliateLink, fetchByIds, fetchOffers } from '../infra/shopee.js';
+import { subIdsDe, type Canal } from '../domain/subid.js';
 import { findNiche, keywords } from '../domain/niches.js';
 import { aplicarGenero, rotuloGenero, type Genero } from '../domain/genero.js';
 import { rank, type Scored } from '../domain/scoring.js';
@@ -254,32 +254,37 @@ export async function registrar(list: Scored[]): Promise<void> {
   await record(list.map((s) => s.offer));
 }
 
-/**
- * Garante link de afiliado em todo produto que vai virar post.
- *
- * O `send` já fazia isso por conta própria (ver `grupo.enviar`), mas o post do
- * TikTok não: ele lia `offerLink ?? url` direto, e como os produtos chegam do
- * banco pelo id, o `offerLink` vinha nulo e o legenda saía com o link cru da
- * Shopee. Post bonito, sem rastreio nenhum — venda feita por ele não pagava
- * comissão. Agora o banco guarda o link (ver `offer.offer_link`), e o que ainda
- * faltar é emitido aqui e gravado, pra não ser emitido de novo amanhã.
- *
- * Falha em emitir não derruba o post: cai no link cru, avisando, que é o
- * comportamento que já existia — só que agora visível.
- */
-export async function garantirLinks(list: Scored[]): Promise<number> {
-  const faltando = list.filter((s) => !s.offer.offerLink);
-  let emitidos = 0;
+export interface LinksEmitidos {
+  /** Com Sub ID — o normal. */
+  comSubId: number;
+  /** Emissão falhou; ficou o link de afiliado da busca, sem Sub ID. */
+  semSubId: number;
+  /** Nenhum link de afiliado. Ver `linkDe` e `grupo.montarMensagens`. */
+  semLink: number;
+}
 
-  for (const s of faltando) {
-    const link = await affiliateLink(s.offer);
-    if (link === s.offer.url) continue; // a emissão falhou; `affiliateLink` já avisou
-    s.offer.offerLink = link;
-    await guardarOfferLink(s.offer.id, link);
-    emitidos++;
+/**
+ * Emite o link de afiliado de cada produto PRO CANAL, com os Sub IDs dele.
+ *
+ * Por canal e por rodada, de propósito: o mesmo produto sai com Sub ID de
+ * grupo no `send` e de TikTok no `photos`, e o relatório da Shopee separa os
+ * dois. Por isso o link fica só em memória (`s.link`) e no registro do envio
+ * — nunca em `offer.offer_link`, que é por produto e misturaria os canais.
+ */
+export async function garantirLinks(list: Scored[], canal: Canal): Promise<LinksEmitidos> {
+  const r: LinksEmitidos = { comSubId: 0, semSubId: 0, semLink: 0 };
+
+  for (const [i, s] of list.entries()) {
+    const link = await affiliateLink(s.offer, subIdsDe(canal, s));
+    if (link) s.link = link;
+    if (!link) r.semLink++;
+    else if (link.origem === 'sub_id') r.comSubId++;
+    else r.semSubId++;
+    // A API assina cada chamada; em rajada ela começa a devolver 429.
+    if (i < list.length - 1) await new Promise((res) => setTimeout(res, 300));
   }
 
-  return emitidos;
+  return r;
 }
 
 export const aprovadas = (list: Scored[], comFoto = false): Scored[] =>

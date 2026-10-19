@@ -261,19 +261,43 @@ export async function fetchByIds(ids: string[]): Promise<Offer[]> {
   return out;
 }
 
-/** The feed usually returns a ready affiliate link; mint one only if it didn't. */
-export async function affiliateLink(offer: Offer): Promise<string> {
-  if (offer.offerLink) return offer.offerLink;
+export interface LinkAfiliado {
+  link: string;
+  /**
+   * `sub_id`: emitido agora, com os Sub IDs do canal — o normal.
+   * `feed`: a emissão falhou e sobrou o `offerLink` da busca. Ainda é link de
+   * afiliado (paga comissão), mas sem Sub ID: o clique não aparece separado.
+   */
+  origem: 'sub_id' | 'feed';
+  subIds: string[];
+}
+
+/**
+ * Link de afiliado COM Sub ID, emitido na hora.
+ *
+ * O `offerLink` que vem pronto na busca é de afiliado, mas sem Sub ID — e
+ * antes ele era usado sempre que existia, então o Sub ID só ia em ~1% dos
+ * links. Agora ele é só a reserva.
+ *
+ * `null` = não há link de afiliado nenhum. Quem chama NÃO deve cair no
+ * `productLink` cru: ele não paga comissão.
+ */
+export async function affiliateLink(offer: Offer, subIds: string[]): Promise<LinkAfiliado | null> {
   try {
     const data = await request<{ generateShortLink: { shortLink: string } }>(
       SHORT_LINK_MUTATION,
-      // Sub id vazio vai como lista vazia, não como [''] — a API aceita as duas
-      // primeiras e recusa a terceira.
-      { input: { originUrl: offer.url, subIds: config.SHOPEE_SUB_ID ? [config.SHOPEE_SUB_ID] : [] } },
+      { input: { originUrl: offer.url, subIds } },
     );
-    return data.generateShortLink?.shortLink || offer.url;
+    const link = data.generateShortLink?.shortLink;
+    if (link) return { link, origem: 'sub_id', subIds };
+    log.warn({ id: offer.id }, 'generateShortLink respondeu sem link');
   } catch (err) {
-    log.warn({ id: offer.id, err: (err as Error).message }, 'short link failed, using product URL');
-    return offer.url;
+    log.warn({ id: offer.id, err: (err as Error).message }, 'falha ao emitir link com Sub ID');
   }
+
+  if (offer.offerLink) {
+    log.warn({ id: offer.id }, 'usando o link de afiliado da busca, SEM Sub ID');
+    return { link: offer.offerLink, origem: 'feed', subIds: [] };
+  }
+  return null;
 }

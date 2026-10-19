@@ -2,10 +2,6 @@
 
 ## Answer style
 
-Keep answers **short but well explained**. Prefer clarity over grammar — if
-dropping articles, using fragments, or writing informally makes the point
-land faster, do it.
-
 - Lead with the answer / the change, not with context.
 - Explain the *why* in one or two lines, not a paragraph.
 - No preambles ("Great question", "Let me look into...") and no recaps of

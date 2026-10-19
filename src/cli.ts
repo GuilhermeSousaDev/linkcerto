@@ -273,11 +273,20 @@ async function send(): Promise<void> {
     return;
   }
 
-  out.linha(`\nEnviando ${picked.length} ofertas:\n`);
-  picked.forEach((s, i) => out.oferta(s, i));
-  await ofertas.registrar(picked);
+  // Links antes de conectar no WhatsApp: produto sem link de afiliado sai da
+  // lista aqui, e você vê exatamente o que vai ser enviado.
+  const m = await grupo.montarMensagens(picked);
+  out.linksDoEnvio(m);
+  if (!m.prontas.length) {
+    logger.warn('nenhuma oferta com link de afiliado — nada enviado');
+    return;
+  }
 
-  logger.info({ enviadas: await grupo.enviar(jid, picked) }, 'enviado');
+  out.linha(`\nEnviando ${m.prontas.length} ofertas:\n`);
+  m.prontas.forEach((p, i) => out.oferta(p.s, i));
+  await ofertas.registrar(m.prontas.map((p) => p.s));
+
+  logger.info({ enviadas: await grupo.enviar(jid, m.prontas) }, 'enviado');
 }
 
 async function ideia(): Promise<void> {
@@ -382,10 +391,11 @@ async function photos(): Promise<void> {
 
   // Antes de gerar: a legenda é escrita dentro do `gerarPost`, e é ela que
   // carrega os links. Produto vindo do banco chega sem link de afiliado.
-  const emitidos = await ofertas.garantirLinks(plan.itens.map((it) => it.s));
-  if (emitidos) out.linha(`\n🔗 ${emitidos} link(s) de afiliado emitidos e guardados.`);
+  const links = await ofertas.garantirLinks(plan.itens.map((it) => it.s), 'tiktok');
+  out.linha(`\n🔗 ${links.comSubId} link(s) de afiliado com Sub ID "${config.SHOPEE_SUB_ID_TIKTOK}".`);
+  if (links.semSubId) out.linha(`   ⚠️  ${links.semSubId} sem Sub ID (link da busca — conta, mas não aparece separado)`);
 
-  const semLink = plan.itens.filter((it) => !it.s.offer.offerLink).length;
+  const semLink = links.semLink;
   if (semLink) {
     out.linha(
       `\n⚠️  ${semLink} produto(s) sem link de afiliado — a legenda vai sair com o\n` +
@@ -482,7 +492,7 @@ async function buscar(): Promise<void> {
   // Link de afiliado em tudo que aparece, e histórico do que você viu — o
   // mesmo caminho do `deals`.
   const vistos = [...r.resultados, ...(r.resultados.length ? [] : r.proximos)].map((x) => x.s);
-  await ofertas.garantirLinks(vistos);
+  await ofertas.garantirLinks(vistos, 'privado');
   await ofertas.registrar(vistos);
 
   out.buscaSobDemanda(r, debug);

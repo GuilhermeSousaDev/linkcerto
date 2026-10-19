@@ -24,6 +24,13 @@ function loadDotEnv(path = resolve(process.cwd(), '.env')): void {
 
 loadDotEnv();
 
+const subId = (nome: string, padrao: string) =>
+  z
+    .string()
+    .regex(/^[A-Za-z0-9]+$/, `${nome}: só letras e números (a Shopee recusa - e _)`)
+    .max(50)
+    .default(padrao);
+
 const schema = z.object({
   LOG_LEVEL: z.string().default('info'),
   /** Postgres do docker-compose.yml. Suba com "npm run db:up". */
@@ -36,8 +43,9 @@ const schema = z.object({
   SHOPEE_APP_SECRET: z.string().default(''),
   SHOPEE_API_URL: z.string().default('https://open-api.affiliate.shopee.com.br/graphql'),
   /**
-   * Marcador de origem no link de afiliado, pra separar no relatório da Shopee
-   * o que veio do grupo do que veio do TikTok.
+   * Sub ID de cada canal: o 1º marcador do link de afiliado, que separa no
+   * relatório da Shopee (Report → Click Report) de onde veio cada clique. Ver
+   * `domain/subid.ts` pros outros dois (tipo da oferta e data).
    *
    * SÓ LETRAS E NÚMEROS. A Shopee recusa hífen e underscore com
    * `error [11001]: Params Error : invalid sub id` — e o padrão daqui era
@@ -45,11 +53,9 @@ const schema = z.object({
    * com o link cru, que não paga comissão. Validado aqui pra que um valor
    * inválido derrube o comando em vez de custar dinheiro sem avisar.
    */
-  SHOPEE_SUB_ID: z
-    .string()
-    .regex(/^[A-Za-z0-9]*$/, 'SHOPEE_SUB_ID: só letras e números (a Shopee recusa - e _)')
-    .max(50)
-    .default('wagroup'),
+  SHOPEE_SUB_ID: subId('SHOPEE_SUB_ID', 'wagrupo'),
+  SHOPEE_SUB_ID_TIKTOK: subId('SHOPEE_SUB_ID_TIKTOK', 'tiktok'),
+  SHOPEE_SUB_ID_PRIVADO: subId('SHOPEE_SUB_ID_PRIVADO', 'waprivado'),
   /** Feed pages per run. Pages are disjoint, so pages x size = products seen. */
   SHOPEE_PAGES: z.coerce.number().int().min(1).max(20).default(5),
   SHOPEE_PAGE_SIZE: z.coerce.number().int().min(1).max(100).default(50),

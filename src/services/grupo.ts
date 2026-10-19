@@ -2,7 +2,8 @@ import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../infra/config.js';
 import { markSent, ultimoEnvio } from '../infra/db.js';
-import { affiliateLink } from '../infra/shopee.js';
+import type { LinkAfiliado } from '../infra/shopee.js';
+import { garantirLinks, type LinksEmitidos } from './ofertas.js';
 import { WhatsApp, type Outbound } from '../infra/whatsapp.js';
 import { formatDeal } from '../domain/mensagem.js';
 import { casarLote, lerLote, type Lote } from '../domain/lote.js';
@@ -49,25 +50,55 @@ export async function naoRepetidas(list: Scored[]): Promise<Scored[]> {
   });
 }
 
-export async function montarMensagens(list: Scored[]): Promise<Outbound[]> {
-  const messages: Outbound[] = [];
-  for (const s of list) {
-    const link = await affiliateLink(s.offer);
-    messages.push({ text: formatDeal(s, link), imageUrl: s.offer.imageUrl });
-  }
-  return messages;
+export interface Preparada {
+  s: Scored;
+  link: LinkAfiliado;
+  msg: Outbound;
 }
 
-/** Envia e marca cada oferta assim que ela sai, não no fim do lote. */
-export async function enviar(jid: string, list: Scored[]): Promise<number> {
-  const messages = await montarMensagens(list);
+/**
+ * As mensagens do grupo, cada uma com o link de afiliado emitido com o Sub ID
+ * do grupo. Produto sem link de afiliado NENHUM fica de fora (`semLink`): o
+ * `productLink` cru não paga comissão, e antes ele ia pro grupo em silêncio.
+ */
+export async function montarMensagens(
+  list: Scored[],
+): Promise<{ prontas: Preparada[]; semLink: Scored[] } & Omit<LinksEmitidos, 'semLink'>> {
+  const r = await garantirLinks(list, 'grupo');
+  const prontas: Preparada[] = [];
+  const semLink: Scored[] = [];
+  for (const s of list) {
+    if (!s.link) {
+      semLink.push(s);
+      continue;
+    }
+    prontas.push({ s, link: s.link, msg: { text: formatDeal(s, s.link.link), imageUrl: s.offer.imageUrl } });
+  }
+  return { ...r, prontas, semLink };
+}
+
+/**
+ * Envia e marca cada oferta assim que ela sai, não no fim do lote — com o
+ * link exato, os Sub IDs e o texto, pra cruzar depois com o relatório da Shopee.
+ */
+export async function enviar(jid: string, prontas: Preparada[]): Promise<number> {
   const wa = new WhatsApp();
   try {
     await wa.connect();
-    return await wa.sendMany(jid, messages, async (i) => {
-      const s = list[i];
-      if (s) await markSent(s.offer.id, s.offer.price);
-    });
+    return await wa.sendMany(
+      jid,
+      prontas.map((p) => p.msg),
+      async (i) => {
+        const p = prontas[i];
+        if (!p) return;
+        await markSent(p.s.offer.id, p.s.offer.price, {
+          link: p.link.link,
+          subIds: p.link.subIds,
+          origem: p.link.origem,
+          mensagem: p.msg.text,
+        });
+      },
+    );
   } finally {
     await wa.close();
   }

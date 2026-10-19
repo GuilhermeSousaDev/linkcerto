@@ -54,6 +54,13 @@ CREATE TABLE IF NOT EXISTS sent (
   sent_at  TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_sent ON sent (offer_id, sent_at DESC);
+-- O link EXATO de cada envio, com os Sub IDs. É o que permite cruzar o
+-- relatório de cliques da Shopee com o que o grupo recebeu. Envios antigos
+-- ficam null: antes disso o link não era registrado.
+ALTER TABLE sent ADD COLUMN IF NOT EXISTS link TEXT;
+ALTER TABLE sent ADD COLUMN IF NOT EXISTS sub_ids TEXT[];
+ALTER TABLE sent ADD COLUMN IF NOT EXISTS link_origem TEXT;
+ALTER TABLE sent ADD COLUMN IF NOT EXISTS mensagem TEXT;
 
 CREATE TABLE IF NOT EXISTS posted (
   id        BIGSERIAL PRIMARY KEY,
@@ -194,26 +201,21 @@ export async function ultimoEnvio(offerIds: string[]): Promise<Map<string, numbe
   return new Map(rows.map((r) => [r.offer_id, Number(r.price)]));
 }
 
-/**
- * Guarda um link de afiliado recém-emitido.
- *
- * `IS NULL` na condição: só preenche buraco, nunca troca um link que já existe.
- * O link carrega o sub_id de rastreio, e sobrescrever o de um produto que já
- * saiu num post quebraria a atribuição das vendas daquele post.
- */
-export async function guardarOfferLink(offerId: string, link: string): Promise<void> {
-  await query('UPDATE offer SET offer_link = $2 WHERE id = $1 AND offer_link IS NULL', [
-    offerId,
-    link,
-  ]);
+/** O que saiu de fato no grupo: o link exato, os Sub IDs e o texto. */
+export interface Envio {
+  link: string;
+  subIds: string[];
+  /** `sub_id` ou `feed` — ver `LinkAfiliado.origem`. */
+  origem: string;
+  mensagem: string;
 }
 
-export async function markSent(offerId: string, price: number): Promise<void> {
-  await query('INSERT INTO sent (offer_id, price, sent_at) VALUES ($1,$2,$3)', [
-    offerId,
-    price,
-    new Date(),
-  ]);
+export async function markSent(offerId: string, price: number, envio: Envio): Promise<void> {
+  await query(
+    `INSERT INTO sent (offer_id, price, sent_at, link, sub_ids, link_origem, mensagem)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [offerId, price, new Date(), envio.link, envio.subIds, envio.origem, envio.mensagem],
+  );
 }
 
 /**

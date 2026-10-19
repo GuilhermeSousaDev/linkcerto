@@ -7,6 +7,7 @@ import { brl } from '../domain/mensagem.js';
 import { pegarFoto } from './capas.js';
 import type { PostPlan } from '../ai/index.js';
 import type { Scored } from '../domain/scoring.js';
+import { linkDe } from '../domain/subid.js';
 
 const log = logger.child({ mod: 'photo' });
 
@@ -989,7 +990,7 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
       const faixa = it.s.offer.priceMax !== null ? ` a ${brl(it.s.offer.priceMax)}` : '';
       tabela.push(
         `${it.codigo}   ${brl(it.s.offer.price)}${faixa}   ${it.s.offer.title.slice(0, 52)}`,
-        `             ${it.s.offer.offerLink ?? it.s.offer.url}`,
+        `             ${linkDe(it.s)}`,
         '',
       );
     }
@@ -1006,7 +1007,7 @@ export async function makePhotos(plan: PostPlan, outDir: string): Promise<PhotoO
       '',
       ...referencia,
       ...produtos.map(
-        (s, i) => `[${i + 1}] ${brl(s.offer.price)} — ${s.offer.offerLink ?? s.offer.url}`,
+        (s, i) => `[${i + 1}] ${brl(s.offer.price)} — ${linkDe(s)}`,
       ),
       ...tabela,
     ].join('\n') + '\n',

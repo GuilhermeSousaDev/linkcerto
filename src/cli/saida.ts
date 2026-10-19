@@ -1,5 +1,6 @@
 import { brl } from '../domain/mensagem.js';
 import type { Scored } from '../domain/scoring.js';
+import { linkDe } from '../domain/subid.js';
 import { rotuloProduto } from '../domain/produto.js';
 import type { PostPlan, ForaDoPublico } from '../ai/index.js';
 import type { ImageScore } from '../media/imagescore.js';
@@ -214,7 +215,7 @@ function resultado(r: Resultado, i: number, debug: boolean, foraDoOrcamento = fa
     if (r.match.falta.length) linha(`    ✗ ${lista(r.match.falta)}`);
     linha(`    motivo: "${s.motivo}"`);
   }
-  linha(`    🔗 ${o.offerLink ?? o.url}`);
+  linha(`    🔗 ${linkDe(s)}${s.link?.origem === 'sub_id' ? '' : '  ⚠️ sem Sub ID'}`);
   linha();
 }
 
@@ -244,5 +245,19 @@ export function buscaSobDemanda(r: BuscaSobDemanda, debug: boolean): void {
   if (r.proximos.length && (!r.resultados.length || debug)) {
     linha(`### PRÓXIMOS DO PEDIDO (${r.proximos.length}) — passaram na qualidade, fora do orçamento\n`);
     r.proximos.forEach((x, i) => resultado(x, i, debug, true));
+  }
+}
+
+/** Antes do envio: quantos links saíram com Sub ID e o que ficou sem link. */
+export function linksDoEnvio(m: {
+  comSubId: number;
+  semSubId: number;
+  semLink: Scored[];
+}): void {
+  linha(`\n🔗 ${m.comSubId} link(s) de afiliado com Sub ID do grupo`);
+  if (m.semSubId) linha(`   ⚠️  ${m.semSubId} sem Sub ID (link da busca — conta, mas não aparece separado)`);
+  if (m.semLink.length) {
+    linha(`   🚫 ${m.semLink.length} sem link de afiliado — ficaram de fora:`);
+    for (const s of m.semLink) linha(`      ${s.offer.title.slice(0, 60)}`);
   }
 }

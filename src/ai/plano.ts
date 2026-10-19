@@ -3,6 +3,7 @@ import { config } from '../infra/config.js';
 import { logger } from '../infra/logger.js';
 import { brl } from '../domain/mensagem.js';
 import type { Scored } from '../domain/scoring.js';
+import { linkDe } from '../domain/subid.js';
 import { clip } from '../util/texto.js';
 import { codigosDoPost } from '../domain/codigo.js';
 import { catalogo, resolverCasting } from '../media/capas.js';
@@ -711,7 +712,7 @@ export function planToJson(plan: PostPlan): string {
         preco: it.s.offer.price,
         preco_max: it.s.offer.priceMax,
         desconto: Math.round(it.s.discount * 100),
-        link: it.s.offer.offerLink ?? it.s.offer.url,
+        link: linkDe(it.s),
       })),
     },
     null,

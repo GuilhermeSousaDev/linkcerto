@@ -1,6 +1,6 @@
 import { config } from '../infra/config.js';
 import { historyFor, type Snapshot } from '../infra/db.js';
-import type { Offer } from '../infra/shopee.js';
+import type { LinkAfiliado, Offer } from '../infra/shopee.js';
 import { analisarProduto, precoIncompativel, PESO_TIPO, type Produto } from './produto.js';
 import { ehInfantil } from './infantil.js';
 
@@ -71,6 +71,8 @@ export interface Scored {
    * Preenchido em `grupo.naoRepetidas`, não aqui.
    */
   reenvioDe?: number;
+  /** Link de afiliado emitido pro canal desta rodada. Ver `ofertas.garantirLinks`. */
+  link?: LinkAfiliado;
   /** O que o título diz que o produto é. Ver `produto.ts`. */
   produto: Produto;
   /** null = eligible; otherwise why it was dropped. */
