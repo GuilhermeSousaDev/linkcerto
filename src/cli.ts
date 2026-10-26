@@ -35,6 +35,9 @@ import { idadeEmTexto, salvar, ultimoSalvo } from './util/arquivo.js';
  */
 const GRADE_TOP = 27;
 
+/** `send` que não mandou nada (lote vazio). A agenda usa pra tentar outro nicho. */
+const EXIT_NADA_ENVIADO = 3;
+
 const HELP = `
 Alerta de Preços
 
@@ -270,6 +273,7 @@ async function send(): Promise<void> {
   if (repetidas) out.linha(`\n${repetidas} já foram pro grupo (sem baixa de preço) e ficaram de fora`);
   if (!picked.length) {
     logger.info('nada novo pra enviar');
+    process.exitCode = EXIT_NADA_ENVIADO;
     return;
   }
 
@@ -279,6 +283,7 @@ async function send(): Promise<void> {
   out.linksDoEnvio(m);
   if (!m.prontas.length) {
     logger.warn('nenhuma oferta com link de afiliado — nada enviado');
+    process.exitCode = EXIT_NADA_ENVIADO;
     return;
   }
 
@@ -529,6 +534,7 @@ const COMANDOS: Record<string, () => Promise<void> | void> = {
   'photos:send': photosSend,
   'wa:login': waLogin,
   'wa:groups': waGroups,
+  avisar: () => grupo.avisar(frase('texto') ?? 'aviso da agenda'),
   niches: () => out.linha(listNiches()),
   capas: () => out.linha(listarCapas()),
   'capas:prep': () => {
@@ -608,4 +614,11 @@ main()
     logger.error((err as Error).message);
     process.exitCode = 1;
   })
-  .finally(close);
+  .finally(async () => {
+    await close();
+    // O socket do WhatsApp deixa timers vivos mesmo depois do `close()`, e o
+    // processo ficava pendurado pra sempre. Na agenda isso travava TODOS os
+    // envios seguintes: ela espera o filho terminar. `process.exit()` sem
+    // argumento mantém o `exitCode` definido acima.
+    process.exit();
+  });

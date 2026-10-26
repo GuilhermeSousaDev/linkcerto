@@ -9,7 +9,7 @@ npm run photos                     # gera os cards com esse plano
 npm run send                       # manda as ofertas pro grupo
 ```
 
-Sem servidor, sem container, sem agendador.
+Tudo roda na mão. A única exceção é o envio automático pro grupo, que é opcional (veja abaixo).
 
 ---
 
@@ -254,6 +254,25 @@ npm run deals -- --sem-filtro    # ver a lista crua, sem o filtro
 > falhar (IA fora do ar), ele avisa em vez de fingir que filtrou.
 
 ---
+
+## Envio automático pro grupo
+
+O container `agenda` roda o `send` sozinho nos horários do `AGENDA_HORARIOS` (padrão 12:00 e 17:00, horário de São Paulo).
+Cada rodada sorteia um nicho do catálogo (`npm run niches`), sem repetir os últimos, e roda `send --novo --keywords <termos do nicho> --top $AGENDA_TOP`.
+Se o nicho não rende oferta que passe na curadoria, tenta outro (até 3).
+O `AGENDA_NICHOS_FORA` tira nichos do sorteio.
+
+```bash
+npm run wa:login        # a sessão em data/wa-auth precisa existir antes
+npm run agenda:up       # builda e sobe banco + agenda
+npm run agenda:logs     # acompanha os envios
+npm run agenda:down     # para só a agenda
+```
+
+O container tem `restart: unless-stopped`.
+Com o Docker Desktop abrindo junto com o Windows, a agenda volta sozinha quando o PC liga.
+Horário perdido (PC desligado ou dormindo) é pulado: nada é mandado atrasado.
+Mudou o código ou o `.env`? Rode `npm run agenda:up` de novo.
 
 ## O grupo: `deals` → `send`
 

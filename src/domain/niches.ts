@@ -161,3 +161,7 @@ export function listNiches(): string {
     '',
   ].join('\n');
 }
+
+/** O catálogo inteiro, pra quem precisa escolher um nicho (a agenda). */
+export const todosNichos = (): { nome: string; niche: Niche }[] =>
+  Object.entries(NICHES).map(([nome, niche]) => ({ nome, niche }));

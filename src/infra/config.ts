@@ -203,6 +203,20 @@ const schema = z.object({
   WA_PERSONAL_GROUP_JID: z.string().default(''),
   WA_MIN_DELAY_MS: z.coerce.number().int().min(0).default(8000),
   WA_MAX_DELAY_MS: z.coerce.number().int().min(0).default(20000),
+
+  // ── Agenda (container "agenda" do docker-compose.yml) ──
+  /** Horários do envio automático pro grupo, HH:MM no fuso do TZ. */
+  AGENDA_HORARIOS: z
+    .string()
+    .regex(/^\s*\d{1,2}:\d{2}\s*(,\s*\d{1,2}:\d{2}\s*)*$/, 'AGENDA_HORARIOS: ex. 12:00,17:00')
+    .default('12:00,17:00'),
+  /**
+   * Nichos que a agenda NUNCA sorteia (nomes do `npm run niches`). O padrão
+   * tira o que não serve pro AI_PUBLICO masculino ou paga pouca comissão.
+   */
+  AGENDA_NICHOS_FORA: z.string().default('roupa-feminina,eletronicos,ferramentas'),
+  /** ATÉ quantas ofertas por envio — duas rodadas por dia somam o dobro. */
+  AGENDA_TOP: z.coerce.number().int().min(1).default(6),
 });
 
 const parsed = schema.safeParse(process.env);

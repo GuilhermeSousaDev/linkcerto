@@ -227,3 +227,15 @@ export function textosDaPasta(dir: string): TextosDoPost {
 
   return { legenda: legendaDoTxt(dir), comentarioFixado: null };
 }
+
+/** Um aviso de texto pro seu grupo pessoal — a agenda usa pra dizer que um envio falhou. */
+export async function avisar(texto: string): Promise<void> {
+  const jid = exigirGrupoPessoal();
+  const wa = new WhatsApp();
+  try {
+    await wa.connect();
+    await wa.send(jid, { text: texto });
+  } finally {
+    await wa.close();
+  }
+}

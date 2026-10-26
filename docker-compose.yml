@@ -18,5 +18,30 @@ services:
       timeout: 3s
       retries: 10
 
+  # Envio automático pro grupo (src/agendador.ts). O restart faz ele voltar
+  # sozinho quando o Docker Desktop abre, junto com o Windows.
+  agenda:
+    build: .
+    container_name: alerta-precos-agenda
+    logging:
+      # O Baileys despeja sessões inteiras no log: sem teto ele só cresce.
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Dentro da rede do compose o banco é "db:5432", não "localhost:5433".
+      DATABASE_URL: postgres://alerta:alerta@db:5432/alerta
+      # Os horários do AGENDA_HORARIOS são lidos neste fuso.
+      TZ: America/Sao_Paulo
+    volumes:
+      # Sessão do WhatsApp (data/wa-auth) e os lotes: os mesmos do npm run send.
+      - ./data:/app/data
+
 volumes:
   db:
