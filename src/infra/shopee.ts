@@ -110,10 +110,13 @@ async function request<T>(query: string, variables: Record<string, unknown> = {}
       if (res.status === 429 || res.status >= 500) throw new Error(`retryable HTTP ${res.status}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
 
-      const json = (await res.json()) as { data?: T; errors?: unknown[] };
+      const json = (await res.json()) as { data?: T; errors?: { extensions?: { code?: number } }[] };
       if (json.errors?.length) {
-        // Contract mismatch, not transient — don't retry.
-        throw new Error(`GraphQL: ${JSON.stringify(json.errors).slice(0, 300)}`);
+        // Shopee error 10000 = transient System Error — retryable.
+        // Other GraphQL errors are contract mismatches — don't retry.
+        const isSystemError = json.errors.some((e) => e.extensions?.code === 10000);
+        const prefix = isSystemError ? 'retryable ' : '';
+        throw new Error(`${prefix}GraphQL: ${JSON.stringify(json.errors).slice(0, 300)}`);
       }
       if (!json.data) throw new Error('empty response');
       return json.data;
